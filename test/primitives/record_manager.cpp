@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -23,6 +23,7 @@
 
 using namespace bc;
 using namespace bc::database;
+using namespace bc::system;
 
 BOOST_AUTO_TEST_SUITE(record_manager_tests)
 
@@ -42,7 +43,7 @@ BOOST_AUTO_TEST_CASE(record_manager__construct__one_record__expected)
     const auto link1 = manager.allocate(1);
     BOOST_REQUIRE_EQUAL(link1, 0u);
 
-    BOOST_REQUIRE_GE(file.size(), link_size + 1 * record_size);
+    BOOST_REQUIRE_GE(file.capacity(), link_size + 1 * record_size);
 
     manager.commit();
 }
@@ -63,7 +64,7 @@ BOOST_AUTO_TEST_CASE(record_manager__construct__one_record_offset__expected)
     const auto link1 = manager.allocate(1);
     BOOST_REQUIRE_EQUAL(link1, 0u);
 
-    BOOST_REQUIRE_GE(file.size(), offset + link_size + 1 * record_size);
+    BOOST_REQUIRE_GE(file.capacity(), offset + link_size + 1 * record_size);
 }
 
 BOOST_AUTO_TEST_CASE(record_manager__allocate__two_records__expected)
@@ -84,7 +85,7 @@ BOOST_AUTO_TEST_CASE(record_manager__allocate__two_records__expected)
     const auto link2 = manager.allocate(1);
     BOOST_REQUIRE_EQUAL(link2, 1u);
 
-    BOOST_REQUIRE_GE(file.size(), link_size + 2 * record_size);
+    BOOST_REQUIRE_GE(file.capacity(), link_size + 2 * record_size);
 }
 
 BOOST_AUTO_TEST_CASE(record_manager__count__multiple_records_with_offset__expected)

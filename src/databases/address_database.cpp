@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -22,7 +22,7 @@
 #include <cstddef>
 #include <tuple>
 #include <utility>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/memory/memory.hpp>
 #include <bitcoin/database/primitives/hash_table_multimap.hpp>
 
@@ -37,7 +37,8 @@
 namespace libbitcoin {
 namespace database {
 
-using namespace bc::chain;
+using namespace bc::system;
+using namespace bc::system::chain;
 
 // Total size of address storage (using tx link vs. hash for point).
 static const auto value_size = payment_record::satoshi_fixed_size(false);
@@ -45,14 +46,15 @@ static const auto value_size = payment_record::satoshi_fixed_size(false);
 // History uses a hash table index, O(1).
 // The hash table stores indexes to the first element of unkeyed linked lists.
 address_database::address_database(const path& lookup_filename,
-    const path& rows_filename, size_t buckets, size_t expansion)
-  : hash_table_file_(lookup_filename, expansion),
+    const path& rows_filename, size_t table_minimum, size_t index_minimum,
+    size_t buckets, size_t expansion)
+  : hash_table_file_(lookup_filename, table_minimum, expansion),
 
     // THIS sizeof(link_type) IS ASSUMED BY hash_table_multimap.
     hash_table_(hash_table_file_, buckets, sizeof(link_type)),
 
     // Linked-list storage for multimap.
-    address_index_file_(rows_filename, expansion),
+    address_index_file_(rows_filename, index_minimum, expansion),
     address_index_(address_index_file_, 0,
         hash_table_multimap<key_type, index_type, link_type>::size(value_size)),
 
@@ -112,28 +114,75 @@ bool address_database::close()
 // Queries.
 // ----------------------------------------------------------------------------
 
-// TODO: obtain confirmation height from tx record (along with hash).
-address_result address_database::get(const short_hash& hash) const
+address_result address_database::get(const hash_digest& hash) const
 {
+    // This does not populate hash or height, caller can dereference link.
     return { address_multimap_.find(hash), hash };
 }
 
 // Store.
 // ----------------------------------------------------------------------------
 
-// Confirmation of payment is dynamically derived from current tx state.
-void address_database::index(const chain::transaction& tx)
+// protected
+void address_database::store(const hash_digest& key, const point& point,
+    file_offset link, bool output)
 {
-    // TODO: loop over payments, relying only on output scripts, adding rows.
-    ////const auto writer = [&](byte_serializer& serial)
-    ////{
-    ////    payment.to_data(serial, false);
-    ////};
+    const payment_record record
+    {
+        link,
+        point.index(),
+        point.checksum(),
+        output
+    };
 
-    ////// Write the new payment history.
-    ////auto next = address_multimap_.allocator();
-    ////next.create(writer);
-    ////address_multimap_.link(hash, next);
+    const auto write = [&](byte_serializer& serial)
+    {
+        record.to_data(serial, false);
+    };
+
+    auto element = address_multimap_.allocator();
+    element.create(write);
+    address_multimap_.link(key, element);
+}
+
+// Confirmation of payment is dynamically derived from current tx state.
+void address_database::catalog(const transaction& tx)
+{
+    BITCOIN_ASSERT(tx.metadata.link);
+    BITCOIN_ASSERT(!tx.metadata.cataloged);
+
+    const auto tx_hash = tx.hash();
+    const auto link = tx.metadata.link;
+    const auto& inputs = tx.inputs();
+    BITCOIN_ASSERT(inputs.size() <= max_uint32);
+
+    for (uint32_t index = 0; index < inputs.size(); ++index)
+    {
+        const auto& input = inputs[index];
+
+        // Skip coinbase input.
+        if (input.previous_output().is_null())
+            continue;
+
+        BITCOIN_ASSERT(input.previous_output().metadata.cache.is_valid());
+
+        const input_point inpoint{ tx_hash, index };
+        const auto& script = input.previous_output().metadata.cache.script();
+        const auto key = sha256_hash(script.to_data(false));
+        store(key, inpoint, link, false);
+    }
+
+    const auto& outputs = tx.outputs();
+    BITCOIN_ASSERT(outputs.size() <= max_uint32);
+
+    for (uint32_t index = 0; index < outputs.size(); ++index)
+    {
+        const auto& output = outputs[index];
+        const output_point outpoint{ tx_hash, index };
+        const auto& script = output.script();
+        const auto key = sha256_hash(script.to_data(false));
+        store(key, outpoint, link, true);
+    }
 }
 
 } // namespace database

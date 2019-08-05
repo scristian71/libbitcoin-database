@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -31,8 +31,8 @@
 
 namespace test {
 
-typedef bc::byte_array<4> tiny_hash;
-typedef bc::byte_array<8> little_hash;
+typedef bc::system::byte_array<4> tiny_hash;
+typedef bc::system::byte_array<8> little_hash;
 
 bool create(const boost::filesystem::path& file_path);
 bool exists(const boost::filesystem::path& file_path);

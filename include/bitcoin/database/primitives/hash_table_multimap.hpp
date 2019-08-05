@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -21,7 +21,7 @@
 
 #include <cstdint>
 #include <string>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/define.hpp>
 #include <bitcoin/database/memory/memory.hpp>
 #include <bitcoin/database/primitives/hash_table.hpp>
@@ -55,14 +55,14 @@ public:
     /// THIS ASSUMES MAP HAS VALUE SIZE == sizeof(Link).
     hash_table_multimap(table& map, manager& manager);
 
-    /// Use to allocate an element in a multimap. 
+    /// Use to allocate an element in a multimap.
     value_type allocator();
 
     /// Find an iterator for the given multimap key.
     const_value_type find(const Key& key) const;
 
     /// Get the iterator for the given link from a multimap.
-    const_value_type find(Link link) const;
+    const_value_type get(Link link) const;
 
     /// Add the given element to a multimap.
     /// Multimap elements have empty internal key values.
@@ -74,8 +74,8 @@ public:
 private:
     table& map_;
     manager& manager_;
-    mutable shared_mutex root_mutex_;
-    mutable shared_mutex list_mutex_;
+    mutable system::shared_mutex root_mutex_;
+    mutable system::shared_mutex list_mutex_;
 };
 
 } // namespace database

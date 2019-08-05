@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -21,7 +21,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/define.hpp>
 #include <bitcoin/database/memory/memory.hpp>
 #include <bitcoin/database/primitives/hash_table_header.hpp>
@@ -79,14 +79,14 @@ public:
     /// Commit table size to the file.
     void commit();
 
-    /// Use to allocate an element in the hash table. 
+    /// Use to allocate an element in the hash table.
     value_type allocator();
 
     /// Find an element with the given key in the hash table.
     const_value_type find(const Key& key) const;
 
     /// Get the element with the given link from the hash table.
-    const_value_type find(Link link) const;
+    const_value_type get(Link link) const;
 
     /// A not found instance for this table, same as find(not_found).
     const_value_type terminator() const;
@@ -104,8 +104,8 @@ private:
 
     hash_table_header<Index, Link> header_;
     Manager manager_;
-    mutable shared_mutex root_mutex_;
-    mutable shared_mutex list_mutex_;
+    mutable system::shared_mutex root_mutex_;
+    mutable system::shared_mutex list_mutex_;
 };
 
 } // namespace database

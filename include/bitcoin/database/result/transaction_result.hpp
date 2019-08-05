@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -21,7 +21,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/define.hpp>
 #include <bitcoin/database/primitives/list_element.hpp>
 #include <bitcoin/database/primitives/slab_manager.hpp>
@@ -34,7 +34,7 @@ namespace database {
 class BCD_API transaction_result
 {
 public:
-    typedef hash_digest key_type;
+    typedef system::hash_digest key_type;
     typedef file_offset link_type;
     typedef slab_manager<link_type> manager;
     typedef list_element<const manager, link_type, key_type>
@@ -52,8 +52,11 @@ public:
     /// This is unconfirmed tx position sentinel.
     static const uint16_t unconfirmed;
 
+    /// This is deconfirmed tx position sentinel.
+    static const uint16_t deconfirmed;
+
     transaction_result(const const_element_type& element,
-        shared_mutex& metadata_mutex);
+        system::shared_mutex& metadata_mutex);
 
     /// True if this transaction result is valid (found).
     operator bool() const;
@@ -62,12 +65,12 @@ public:
     file_offset link() const;
 
     /// The transaction hash (from cache).
-    hash_digest hash() const;
+    system::hash_digest hash() const;
 
-    /// The height of the block of the tx, or forks if unconfirmed.
+    /// The height of the block of the tx, or forks if unconfirmed or deconfirmed.
     size_t height() const;
 
-    /// The ordinal position of the tx in a block, or unconfirmed.
+    /// The ordinal position of the tx in a block, or unconfirmed or deconfirmed.
     size_t position() const;
 
     /// The transaction is in a candidate block.
@@ -76,14 +79,17 @@ public:
     /// The median time past of the block which includes the transaction.
     uint32_t median_time_past() const;
 
-    /// All tx outputs confirmed below fork, or candidate as applicable.
-    bool is_spent(size_t fork_height, bool candidate) const;
+    /// All tx outputs confirmed below fork or as candidates.
+    bool is_candidate_spent(size_t fork_height) const;
+
+    /////// All tx outputs confirmed below fork.
+    ////bool is_confirmed_spent(size_t fork_height) const;
 
     /// The output at the specified index within this transaction.
-    chain::output output(uint32_t index) const;
+    system::chain::output output(uint32_t index) const;
 
     /// The transaction, optionally including witness.
-    chain::transaction transaction(bool witness=true) const;
+    system::chain::transaction transaction(bool witness=true) const;
 
     /// Iterate over the input set.
     inpoint_iterator begin() const;
@@ -99,7 +105,7 @@ private:
     const const_element_type element_;
 
     // Metadata values are kept consistent by mutex.
-    shared_mutex& metadata_mutex_;
+    system::shared_mutex& metadata_mutex_;
 };
 
 } // namespace database

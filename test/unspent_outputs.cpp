@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -21,8 +21,9 @@
 #include <bitcoin/database.hpp>
 
 using namespace bc;
-using namespace bc::chain;
 using namespace bc::database;
+using namespace bc::system;
+using namespace bc::system::chain;
 
 BOOST_AUTO_TEST_SUITE(unspent_outputs_tests)
 
@@ -130,7 +131,7 @@ BOOST_AUTO_TEST_CASE(unspent_outputs__remove2__remove_one_output__expected_outpu
     BOOST_REQUIRE_EQUAL(point.metadata.median_time_past, expected_median_time_past);
     BOOST_REQUIRE_EQUAL(point.metadata.confirmed, expected_confirmed);
     BOOST_REQUIRE(!point.metadata.coinbase);
-    BOOST_REQUIRE(!point.metadata.spent);
+    BOOST_REQUIRE(!point.metadata.confirmed_spent);
 
     cache.remove({ tx1.hash(), 1 });
     BOOST_REQUIRE_EQUAL(cache.size(), 2u);

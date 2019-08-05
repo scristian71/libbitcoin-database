@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -21,7 +21,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <utility>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/block_state.hpp>
 #include <bitcoin/database/memory/memory.hpp>
 #include <bitcoin/database/primitives/record_manager.hpp>
@@ -30,20 +30,8 @@
 namespace libbitcoin {
 namespace database {
 
-using namespace bc::chain;
-
-static const auto header_size = header::satoshi_fixed_size();
-static constexpr auto median_time_past_size = sizeof(uint32_t);
-static constexpr auto height_size = sizeof(uint32_t);
-static constexpr auto state_size = sizeof(uint8_t);
-static constexpr auto checksum_size = sizeof(uint32_t);
-static constexpr auto tx_start_size = sizeof(uint32_t);
-static constexpr auto tx_count_size = sizeof(uint16_t);
-
-static const auto height_offset = header_size + median_time_past_size;
-static const auto state_offset = height_offset + height_size;
-static const auto checksum_offset = state_offset + state_size;
-static const auto transactions_offset = checksum_offset + checksum_size;
+using namespace bc::system;
+using namespace bc::system::chain;
 
 // Placeholder for unimplemented checksum caching.
 static constexpr auto no_checksum = 0u;
@@ -63,17 +51,16 @@ block_result::block_result(const const_element_type& element,
     if (!element_)
         return;
 
-    auto hash = element_.key();
-
-    // Each of the three atomic sets could be guarded independently.
     const auto reader = [&](byte_deserializer& deserial)
     {
+        // These are never updated.
+        header_.from_data(deserial, element_.key(), false);
+        median_time_past_ = deserial.read_4_bytes_little_endian();
+        height_ = deserial.read_4_bytes_little_endian();
+
         // Critical Section.
         ///////////////////////////////////////////////////////////////////////
         shared_lock lock(metadata_mutex_);
-        header_.from_data(deserial, std::move(hash), false);
-        median_time_past_ = deserial.read_4_bytes_little_endian();
-        height_ = deserial.read_4_bytes_little_endian();
         state_ = deserial.read_byte();
         checksum_ = deserial.read_4_bytes_little_endian();
         tx_start_ = deserial.read_4_bytes_little_endian();
@@ -81,8 +68,8 @@ block_result::block_result(const const_element_type& element,
         ///////////////////////////////////////////////////////////////////////
     };
 
-     // Reads are not deferred for updatable values as atomicity is required.
-     element.read(reader);
+    // Reads not deferred for updatable values as consistency is required.
+    element_.read(reader);
 }
 
 block_result::operator bool() const
@@ -102,16 +89,44 @@ array_index block_result::link() const
     return element_.link();
 }
 
+// This is read each time it is invoked, so caller should cache.
 hash_digest block_result::hash() const
 {
-    // This is read each time it is invoked, so caller should cache.
     return element_ ? element_.key() : null_hash;
 }
 
-const chain::header& block_result::header() const
+void block_result::set_metadata(const chain::header& header) const
 {
-    // TODO: populate all metadata or only use methods?
-    return header_;
+    if ((header.metadata.exists = element_))
+    {
+        const auto state = this->state();
+        header.metadata.error = error();
+        header.metadata.candidate = is_candidate(state);
+        header.metadata.confirmed = is_confirmed(state);
+        header.metadata.validated = is_valid(state) || is_failed(state);
+        header.metadata.populated = transaction_count() != 0;
+        header.metadata.median_time_past = median_time_past();
+    }
+}
+
+// This is read each time it is invoked, so caller should cache.
+chain::header block_result::header(bool metadata) const
+{
+    if (!element_)
+        return {};
+
+    chain::header header;
+    const auto reader = [&](byte_deserializer& deserial)
+    {
+        header.from_data(deserial, element_.key(), false);
+    };
+
+    element_.read(reader);
+
+    if (metadata)
+        set_metadata(header);
+
+    return header;
 }
 
 uint32_t block_result::bits() const

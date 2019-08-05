@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////
-// Copyright (c) 2014-2015 libbitcoin-database developers (see COPYING).
+// Copyright (c) 2014-2019 libbitcoin-database developers (see COPYING).
 //
 //        GENERATED SOURCE CODE, DO NOT EDIT EXCEPT EXPERIMENTALLY
 //
@@ -14,7 +14,7 @@
  * Maintainers: Do not include this header internal to this library.
  */
 
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/block_state.hpp>
 #include <bitcoin/database/data_base.hpp>
 #include <bitcoin/database/define.hpp>

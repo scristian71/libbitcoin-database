@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2018 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -20,36 +20,42 @@
 #define LIBBITCOIN_DATABASE_VERIFY_HPP
 
 #include <cstddef>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/databases/block_database.hpp>
 #include <bitcoin/database/databases/transaction_database.hpp>
 
 namespace libbitcoin {
 namespace database {
 
-code verify(const block_database& blocks, const config::checkpoint& fork_point,
+system::code verify(const block_database& blocks,
+    const system::config::checkpoint& fork_point, bool candidate);
+
+system::code verify_top(const block_database& blocks, size_t height,
     bool candidate);
 
-code verify_top(const block_database& blocks, size_t height, bool candidate);
+system::code verify_exists(const block_database& blocks,
+    const system::chain::header& header);
 
-code verify_exists(const block_database& blocks, const chain::header& header);
+system::code verify_exists(const transaction_database& transactions,
+    const system::chain::transaction& tx);
 
-code verify_exists(const transaction_database& transactions,
-    const chain::transaction& tx);
+system::code verify_missing(const transaction_database& transactions,
+    const system::chain::transaction& tx);
 
-code verify_missing(const transaction_database& transactions,
-    const chain::transaction& tx);
+system::code verify_push(const block_database& blocks,
+    const system::chain::header& header, size_t height);
 
-code verify_push(const block_database& blocks, const chain::header& header,
-    size_t height);
+system::code verify_push(const block_database& blocks,
+    const system::chain::block& block, size_t height);
 
-code verify_push(const block_database& blocks, const chain::block& block,
-    size_t height);
+system::code verify_confirm(const block_database& blocks,
+    const system::hash_digest& block_hash, size_t height);
 
-code verify_update(const block_database& blocks, const chain::block& block,
-    size_t height);
+system::code verify_update(const block_database& blocks,
+    const system::chain::block& block, size_t height);
 
-code verify_not_failed(const block_database& blocks, const chain::block& block);
+system::code verify_not_failed(const block_database& blocks,
+    const system::chain::block& block);
 
 } // namespace database
 } // namespace libbitcoin

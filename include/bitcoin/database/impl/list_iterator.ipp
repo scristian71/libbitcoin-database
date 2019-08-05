@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -19,7 +19,7 @@
 #ifndef LIBBITCOIN_DATABASE_LIST_ITERATOR_IPP
 #define LIBBITCOIN_DATABASE_LIST_ITERATOR_IPP
 
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/primitives/list_element.hpp>
 
 namespace libbitcoin {
@@ -33,7 +33,7 @@ list_iterator<Manager, Link, Key>::list_iterator(value_type element)
 
 template <typename Manager, typename Link, typename Key>
 list_iterator<Manager, Link, Key>::list_iterator(Manager& manager,
-    Link first, shared_mutex& mutex)
+    Link first, system::shared_mutex& mutex)
   : element_(manager, first, mutex)
 {
 }

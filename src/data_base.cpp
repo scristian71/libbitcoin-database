@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -25,7 +25,7 @@
 #include <memory>
 #include <utility>
 #include <boost/filesystem.hpp>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/define.hpp>
 #include <bitcoin/database/result/block_result.hpp>
 #include <bitcoin/database/settings.hpp>
@@ -37,9 +37,10 @@ namespace database {
 
 using namespace std::placeholders;
 using namespace boost::filesystem;
-using namespace bc::chain;
-using namespace bc::machine;
-using namespace bc::wallet;
+using namespace bc::system;
+using namespace bc::system::chain;
+using namespace bc::system::machine;
+using namespace bc::system::wallet;
 
 #define NAME "data_base"
 
@@ -57,11 +58,11 @@ using namespace bc::wallet;
 // Construct.
 // ----------------------------------------------------------------------------
 
-data_base::data_base(const settings& settings)
+data_base::data_base(const settings& settings, bool catalog)
   : closed_(true),
+    catalog_(catalog),
     settings_(settings),
-    database::store(settings.directory, settings.index_addresses,
-        settings.flush_writes)
+    database::store(settings.directory, catalog, settings.flush_writes)
 {
     LOG_DEBUG(LOG_DATABASE)
         << "Buckets: "
@@ -95,7 +96,7 @@ bool data_base::create(const block& genesis)
     // These leave the databases open.
     auto created = blocks_->create() && transactions_->create();
 
-    if (settings_.index_addresses)
+    if (catalog_)
         created &= addresses_->create();
 
     created &= push(genesis) == error::success;
@@ -120,7 +121,7 @@ bool data_base::open()
 
     auto opened = blocks_->open() && transactions_->open();
 
-    if (settings_.index_addresses)
+    if (catalog_)
         opened &= addresses_->open();
 
     if (!opened)
@@ -130,21 +131,38 @@ bool data_base::open()
     return opened;
 }
 
+// TODO: simplify interface by passing settings reference to databases.
+
 // protected
 void data_base::start()
 {
-    blocks_ = std::make_shared<block_database>(block_table, candidate_index,
-        confirmed_index, transaction_index, settings_.block_table_buckets,
+    blocks_ = std::make_shared<block_database>(
+        block_table,
+        candidate_index,
+        confirmed_index,
+        transaction_index,
+        settings_.block_table_size,
+        settings_.candidate_index_size,
+        settings_.confirmed_index_size,
+        settings_.transaction_index_size,
+        settings_.block_table_buckets,
         settings_.file_growth_rate);
 
-    transactions_ = std::make_shared<transaction_database>(transaction_table,
-        settings_.transaction_table_buckets, settings_.file_growth_rate,
+    transactions_ = std::make_shared<transaction_database>(
+        transaction_table,
+        settings_.transaction_table_size,
+        settings_.transaction_table_buckets,
+        settings_.file_growth_rate,
         settings_.cache_capacity);
 
-    if (settings_.index_addresses)
+    if (catalog_)
     {
-        addresses_ = std::make_shared<address_database>(address_table,
-            address_rows, settings_.address_table_buckets,
+        addresses_ = std::make_shared<address_database>(
+            address_table,
+            address_rows,
+            settings_.address_table_size,
+            settings_.address_index_size,
+            settings_.address_table_buckets,
             settings_.file_growth_rate);
     }
 }
@@ -152,7 +170,7 @@ void data_base::start()
 // protected
 void data_base::commit()
 {
-    if (settings_.index_addresses)
+    if (catalog_)
         addresses_->commit();
 
     transactions_->commit();
@@ -171,7 +189,7 @@ bool data_base::flush() const
 
     auto flushed = blocks_->flush() && transactions_->flush();
 
-    if (settings_.index_addresses)
+    if (catalog_)
         flushed &= addresses_->flush();
 
     LOG_DEBUG(LOG_DATABASE)
@@ -192,7 +210,7 @@ bool data_base::close()
 
     auto closed = blocks_->close() && transactions_->close();
 
-    if (settings_.index_addresses)
+    if (catalog_)
         closed &= addresses_->close();
 
     return closed && store::close();
@@ -224,12 +242,12 @@ const address_database& data_base::addresses() const
 // Public writers.
 // ----------------------------------------------------------------------------
 
-code data_base::index(const transaction& tx)
+code data_base::catalog(const transaction& tx)
 {
     code ec;
 
     // Existence check prevents duplicated indexing.
-    if (!settings_.index_addresses || tx.metadata.existed)
+    if (!catalog_ || tx.metadata.cataloged)
         return ec;
 
     // Critical Section
@@ -243,7 +261,7 @@ code data_base::index(const transaction& tx)
     if (!begin_write())
         return error::store_lock_failure;
 
-    addresses_->index(tx);
+    addresses_->catalog(tx);
     addresses_->commit();
 
     return end_write() ? error::success : error::store_lock_failure;
@@ -251,16 +269,17 @@ code data_base::index(const transaction& tx)
     ///////////////////////////////////////////////////////////////////////////
 }
 
-code data_base::index(const block& block)
+code data_base::catalog(const block& block)
 {
     code ec;
-    if (!settings_.index_addresses)
+    if (!catalog_)
         return ec;
 
     // Critical Section
     ///////////////////////////////////////////////////////////////////////////
     conditional_lock lock(flush_each_write());
 
+    const auto start = asio::steady_clock::now();
     if ((ec = verify_exists(*blocks_, block.header())))
         return ec;
 
@@ -270,11 +289,12 @@ code data_base::index(const block& block)
 
     // Existence check prevents duplicated indexing.
     for (const auto& tx: block.transactions())
-        if (!tx.metadata.existed)
-            addresses_->index(tx);
+        if (!tx.metadata.cataloged)
+            addresses_->catalog(tx);
 
     addresses_->commit();
 
+    block.metadata.catalog = asio::steady_clock::now() - start;
     return end_write() ? error::success : error::store_lock_failure;
     //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     ///////////////////////////////////////////////////////////////////////////
@@ -323,6 +343,30 @@ code data_base::reorganize(const config::checkpoint& fork_point,
     return result ? error::success : error::operation_failed;
 }
 
+code data_base::confirm(const hash_digest& block_hash, size_t height)
+{
+    code ec;
+
+    if ((ec = verify_confirm(*blocks_, block_hash, height)))
+        return error::operation_failed;
+
+    const auto block = blocks().get(block_hash);
+    const auto time = block.median_time_past();
+    size_t position = 0;
+
+    // Mark block txs as confirmed without reading transactions.
+    for (const auto tx_offset: block)
+        if (!transactions_->confirm(tx_offset, height, time, position++))
+            return error::operation_failed;
+
+    // TODO: optimize using link.
+    // Promote block to confirmed.
+    if (!blocks_->promote(block_hash, height, false))
+        return error::operation_failed;
+
+    return error::success;
+}
+
 // Add missing transactions for an existing block header.
 // This allows parallel write when write flushing is not enabled.
 code data_base::update(const chain::block& block, size_t height)
@@ -333,6 +377,7 @@ code data_base::update(const chain::block& block, size_t height)
     ///////////////////////////////////////////////////////////////////////////
     conditional_lock lock(flush_each_write());
 
+    const auto start = asio::steady_clock::now();
     if ((ec = verify_update(*blocks_, block, height)))
         return ec;
 
@@ -353,6 +398,7 @@ code data_base::update(const chain::block& block, size_t height)
 
     commit();
 
+    block.metadata.associate = asio::steady_clock::now() - start;
     return end_write() ? error::success : error::store_lock_failure;
     //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     ///////////////////////////////////////////////////////////////////////////
@@ -393,6 +439,7 @@ code data_base::candidate(const block& block)
     ///////////////////////////////////////////////////////////////////////////
     conditional_lock lock(flush_each_write());
 
+    const auto start = asio::steady_clock::now();
     if ((ec = verify_not_failed(*blocks_, block)))
         return ec;
 
@@ -415,11 +462,13 @@ code data_base::candidate(const block& block)
     header.metadata.error = error::success;
     header.metadata.validated = true;
 
+    block.metadata.candidate = asio::steady_clock::now() - start;
     return end_write() ? error::success : error::store_lock_failure;
     ///////////////////////////////////////////////////////////////////////////
 }
 
 // Reorganize blocks.
+// Header metadata median_time_past must be set on all incoming blocks.
 code data_base::reorganize(const config::checkpoint& fork_point,
     block_const_ptr_list_const_ptr incoming,
     block_const_ptr_list_ptr outgoing)
@@ -434,11 +483,12 @@ code data_base::reorganize(const config::checkpoint& fork_point,
     return result ? error::success : error::operation_failed;
 }
 
-// TODO: index payments.
 // Store, update, validate and confirm the presumed valid block.
 code data_base::push(const block& block, size_t height,
     uint32_t median_time_past)
 {
+    code ec;
+
     // Critical Section
     ///////////////////////////////////////////////////////////////////////////
     unique_lock lock(write_mutex_);
@@ -451,7 +501,7 @@ code data_base::push(const block& block, size_t height,
     blocks_->store(block.header(), height, median_time_past);
 
     // Push header reference onto the candidate index and set candidate state.
-    if (!blocks_->index(block.hash(), height, true))
+    if (!blocks_->promote(block.hash(), height, true))
         return error::operation_failed;
 
     // Store any missing txs as unconfirmed, set tx link metadata for all.
@@ -463,15 +513,19 @@ code data_base::push(const block& block, size_t height,
         return error::operation_failed;
 
     // Confirm all transactions (candidate state transition not requried).
-    if (!transactions_->confirm(block.transactions(), height, median_time_past))
+    if (!transactions_->confirm(block, height, median_time_past))
         return error::operation_failed;
 
     // Promote validation state to valid (presumed valid).
     if (!blocks_->validate(block.hash(), error::success))
         return error::operation_failed;
 
+    if ((ec = catalog(block)))
+        return ec;
+
+    // TODO: optimize using link.
     // Push header reference onto the confirmed index and set confirmed state.
-    if (!blocks_->index(block.hash(), height, false))
+    if (!blocks_->promote(block.hash(), height, false))
         return error::operation_failed;
 
     commit();
@@ -555,7 +609,8 @@ code data_base::push_header(const chain::header& header, size_t height,
     if (!header.metadata.exists)
         blocks_->store(header, height, median_time_past);
 
-    blocks_->index(header.hash(), height, true);
+    // TODO: optimize using link.
+    blocks_->promote(header.hash(), height, true);
     blocks_->commit();
 
     return end_write() ? error::success : error::store_lock_failure;
@@ -572,7 +627,7 @@ code data_base::pop_header(chain::header& out_header, size_t height)
     ///////////////////////////////////////////////////////////////////////////
     unique_lock lock(write_mutex_);
 
-    if ((verify_top(*blocks_, height, true)))
+    if ((ec = verify_top(*blocks_, height, true)))
         return ec;
 
     const auto result = blocks_->get(height, true);
@@ -589,8 +644,9 @@ code data_base::pop_header(chain::header& out_header, size_t height)
         if (!transactions_->uncandidate(link))
             return error::operation_failed;
 
-    // Unindex the candidate header.
-    if (!blocks_->unindex(result.hash(), height, true))
+    // TODO: optimize using link.
+    // Demote the candidate header.
+    if (!blocks_->demote(result.hash(), height, true))
         return error::operation_failed;
 
     // Commit everything that was changed and return header.
@@ -658,13 +714,13 @@ bool data_base::pop_above(block_const_ptr_list_ptr blocks,
 code data_base::push_block(const block& block, size_t height)
 {
     code ec;
-    BITCOIN_ASSERT(block.header().metadata.state);
-    auto median_time_past = block.header().metadata.state->median_time_past();
+    const auto median_time_past = block.header().metadata.median_time_past;
 
     // Critical Section
     ///////////////////////////////////////////////////////////////////////////
     unique_lock lock(write_mutex_);
 
+    const auto start = asio::steady_clock::now();
     if ((ec = verify_push(*blocks_, block, height)))
         return ec;
 
@@ -673,18 +729,17 @@ code data_base::push_block(const block& block, size_t height)
         return error::store_lock_failure;
 
     // Confirm txs (and thereby also address indexes), spend prevouts.
-    uint32_t position = 0;
-    for (const auto& tx: block.transactions())
-        if (!transactions_->confirm(tx.metadata.link, height, median_time_past,
-            position++))
-            return error::operation_failed;
+    if (!transactions_->confirm(block, height, median_time_past))
+        return error::operation_failed;
 
+    // TODO: optimize using link.
     // Confirm candidate block (candidate index unchanged).
-    if (!blocks_->index(block.hash(), height, false))
+    if (!blocks_->promote(block.hash(), height, false))
         return error::operation_failed;
 
     commit();
 
+    block.metadata.confirm = asio::steady_clock::now() - start;
     return end_write() ? error::success : error::store_lock_failure;
     //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     ///////////////////////////////////////////////////////////////////////////
@@ -715,12 +770,12 @@ code data_base::pop_block(chain::block& out_block, size_t height)
         return error::store_lock_failure;
 
     // Deconfirm txs (and thereby also address indexes), unspend prevouts.
-    for (const auto& tx: out_block.transactions())
-        if (!transactions_->unconfirm(tx.metadata.link))
-            return error::operation_failed;
+    if (!transactions_->unconfirm(out_block))
+        return error::operation_failed;
 
-    // Unconfirm confirmed block (candidate index unchanged).
-    if (!blocks_->unindex(result.hash(), height, false))
+    // TODO: optimize using link.
+    // Demote the confirmed block (candidate index unchanged).
+    if (!blocks_->demote(result.hash(), height, false))
         return error::operation_failed;
 
     commit();

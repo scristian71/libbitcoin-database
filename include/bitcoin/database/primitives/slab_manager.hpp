@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -20,7 +20,7 @@
 #define LIBBITCOIN_DATABASE_SLAB_MANAGER_HPP
 
 #include <cstddef>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/define.hpp>
 #include <bitcoin/database/memory/memory.hpp>
 #include <bitcoin/database/memory/storage.hpp>
@@ -33,7 +33,7 @@ namespace database {
 /// track of the current end pointer so new slabs can be allocated.
 template <typename Link>
 class slab_manager
-  : noncopyable
+  : system::noncopyable
 {
 public:
     // This cast is a VC++ workaround is OK because Link must be unsigned.
@@ -57,6 +57,9 @@ public:
     /// Allocate a slab and return its position, commit after writing.
     Link allocate(size_t size);
 
+    /// Check if link is past eof
+    bool past_eof(Link link) const;
+
     /// Return memory object for the slab at the specified position.
     memory_ptr get(Link position) const;
 
@@ -73,7 +76,7 @@ private:
 
     // Payload size is protected by mutex.
     size_t payload_size_;
-    mutable shared_mutex mutex_;
+    mutable system::shared_mutex mutex_;
 };
 
 } // namespace database

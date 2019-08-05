@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -29,23 +29,24 @@ class storage
 {
 public:
     storage();
-    storage(bc::data_chunk&& initial);
-    storage(const bc::data_chunk& initial);
+    storage(bc::system::data_chunk&& initial);
+    storage(const bc::system::data_chunk& initial);
     ~storage();
 
     bool open();
     bool flush() const;
     bool close();
     bool closed() const;
-    size_t size() const;
+    size_t capacity() const;
+    size_t logical() const;
     bc::database::memory_ptr access();
     bc::database::memory_ptr resize(size_t size);
     bc::database::memory_ptr reserve(size_t size);
 
 private:
     bool closed_;
-    bc::data_chunk buffer_;
-    mutable bc::upgrade_mutex mutex_;
+    bc::system::data_chunk buffer_;
+    mutable bc::system::upgrade_mutex mutex_;
 };
 
 }

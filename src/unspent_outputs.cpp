@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -19,12 +19,13 @@
 #include <bitcoin/database/unspent_outputs.hpp>
 
 #include <cstddef>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 
 namespace libbitcoin {
 namespace database {
 
-using namespace bc::chain;
+using namespace bc::system;
+using namespace bc::system::chain;
 
 // This does not differentiate indexed-block transactions. These are treated as
 // unconfirmed, so this optimizes only for a top height fork point and tx pool.
@@ -72,7 +73,7 @@ void unspent_outputs::add(const transaction& tx, size_t height,
 
     if (tx.is_coinbase())
     {
-        LOG_DEBUG(LOG_DATABASE)
+        LOG_VERBOSE(LOG_DATABASE)
             << "Output cache hit rate: " << hit_rate() << ", size: " << size();
     }
 
@@ -88,8 +89,9 @@ void unspent_outputs::add(const transaction& tx, size_t height,
     if (unspent_.size() >= capacity_)
         unspent_.right.erase(unspent_.right.begin());
 
-    // TODO: promote the unconfirmed tx cache instead of replacing it.
-    // A confirmed tx may replace the same unconfirmed tx here.
+    // TODO: promote the unconfirmed/deconfirmed tx cache instead of
+    // replacing it.  A confirmed tx may replace the same
+    // unconfirmed/deconfirmed tx here.
     unspent_.insert(
     {
         unspent_transaction{ tx, height, median_time_past, confirmed },
@@ -194,14 +196,23 @@ bool unspent_outputs::populate(const output_point& point,
         return false;
 
     ++hits_;
-    const auto height = transaction.height();
+    const auto prevout_height = transaction.height();
 
     // Populate the output metadata.
-    prevout.spent = false;
+
+    // Cache retains only confirmed/unconfirmed state unspent output state.
     prevout.candidate = false;
-    prevout.confirmed = transaction.is_confirmed() && height <= fork_height;
+    prevout.candidate_spent = false;
+
+    // Cache removes outputs after they are confirmed spent.
+    prevout.confirmed_spent = false;
+
+    // Unspent output is confirmed only if below the fork point.
+    prevout.confirmed = transaction.is_confirmed() &&
+        prevout_height <= fork_height;
+
+    prevout.height = prevout_height;
     prevout.coinbase = transaction.is_coinbase();
-    prevout.height = height;
     prevout.median_time_past = transaction.median_time_past();
     prevout.cache = output->second;
 

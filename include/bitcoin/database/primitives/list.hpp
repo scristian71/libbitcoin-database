@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -19,7 +19,7 @@
 #ifndef LIBBITCOIN_DATABASE_LIST_HPP
 #define LIBBITCOIN_DATABASE_LIST_HPP
 
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/define.hpp>
 #include <bitcoin/database/primitives/list_element.hpp>
 #include <bitcoin/database/primitives/list_iterator.hpp>
@@ -39,7 +39,7 @@ public:
     typedef list_element<const Manager, Link, Key> const_value_type;
 
     /// Create a storage iterator starting at first.
-    list(Manager& manager, Link first, shared_mutex& mutex);
+    list(Manager& manager, Link first, system::shared_mutex& mutex);
 
     bool empty() const;
     const_value_type front() const;
@@ -49,7 +49,7 @@ public:
 private:
     const Link first_;
     Manager& manager_;
-    shared_mutex& mutex_;
+    system::shared_mutex& mutex_;
 };
 
 } // namespace database

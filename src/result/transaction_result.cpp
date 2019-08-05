@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -21,15 +21,16 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/databases/transaction_database.hpp>
 #include <bitcoin/database/memory/memory.hpp>
 
 namespace libbitcoin {
 namespace database {
 
-using namespace bc::chain;
-using namespace bc::machine;
+using namespace bc::system;
+using namespace bc::system::chain;
+using namespace bc::system::machine;
 
 static constexpr auto height_size = sizeof(uint32_t);
 static constexpr auto position_size = sizeof(uint16_t);
@@ -47,6 +48,7 @@ static constexpr auto metadata_size = height_size + position_size +
 const uint8_t transaction_result::candidate_true = 1;
 const uint8_t transaction_result::candidate_false = 0;
 const uint16_t transaction_result::unconfirmed = max_uint16;
+const uint16_t transaction_result::deconfirmed = max_uint16 - 1;
 const uint32_t transaction_result::unverified = rule_fork::unverified;
 
 transaction_result::transaction_result(const const_element_type& element,
@@ -107,7 +109,8 @@ size_t transaction_result::height() const
 
 size_t transaction_result::position() const
 {
-    // Position is unconfirmed unless if block-associated.
+    // Position is unconfirmed unless block-associated.
+    // Position is deconfirmed if block reorganized.
     return position_;
 }
 
@@ -116,12 +119,12 @@ uint32_t transaction_result::median_time_past() const
     return median_time_past_;
 }
 
-bool transaction_result::is_spent(size_t fork_height, bool candidate) const
+bool transaction_result::is_candidate_spent(size_t fork_height) const
 {
-    const auto confirmed = position_ != unconfirmed && height_ <= fork_height;
-
-    // Cannot be spent unless confirmed/candidate.
-    if (!confirmed && !candidate)
+    // Cannot be spent unless candidate or confirmed by fork height.
+    // Deconfirmed implies confirmed in the past, so don't skip checks.
+    if (!candidate_ &&
+        ((position_ == unconfirmed) || (height_ > fork_height)))
         return false;
 
     BITCOIN_ASSERT(element_);
@@ -138,13 +141,42 @@ bool transaction_result::is_spent(size_t fork_height, bool candidate) const
         {
             // TODO: This reads full output, which is simple but not optimial.
             const auto output = output::factory(deserial, false);
-            spent = output.metadata.spent(fork_height, candidate_ && candidate);
+            spent = output.metadata.candidate_spent ||
+                output.metadata.confirmed_spent_height <= fork_height;
         }
     };
 
     element_.read(reader);
     return spent;
 }
+
+////bool transaction_result::is_confirmed_spent(size_t fork_height) const
+////{
+////    // Cannot be spent unless confirmed by fork height.
+////    if (!((position_ != unconfirmed) && (height_ <= fork_height)))
+////        return false;
+////
+////    BITCOIN_ASSERT(element_);
+////    auto spent = true;
+////
+////    // Spentness is unguarded and will be inconsistent during write.
+////    const auto reader = [&](byte_deserializer& deserial)
+////    {
+////        deserial.skip(metadata_size);
+////        const auto outputs = deserial.read_size_little_endian();
+////
+////        // Search all outputs for an unspent indication.
+////        for (auto out = 0u; spent && out < outputs; ++out)
+////        {
+////            // TODO: This reads full output, which is simple but not optimial.
+////            const auto output = output::factory(deserial, false);
+////            spent = output.metadata.confirmed_spent_height <= fork_height;
+////        }
+////    };
+////
+////    element_.read(reader);
+////    return spent;
+////}
 
 // If index is out of range returns default/invalid output (.value not_found).
 chain::output transaction_result::output(uint32_t index) const
@@ -195,6 +227,7 @@ chain::transaction transaction_result::transaction(bool witness) const
     // TODO: populate all metadata or use methods?
     tx.metadata.link = element_.link();
     tx.metadata.existed = true;
+    tx.metadata.cataloged = position_ != unconfirmed;
     return tx;
 }
 

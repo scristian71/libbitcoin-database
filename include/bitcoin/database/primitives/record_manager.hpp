@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -20,7 +20,7 @@
 #define LIBBITCOIN_DATABASE_RECORD_MANAGER_HPP
 
 #include <cstddef>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/define.hpp>
 #include <bitcoin/database/memory/memory.hpp>
 #include <bitcoin/database/memory/storage.hpp>
@@ -34,7 +34,7 @@ namespace database {
 /// It also provides logical record mapping to the record memory address.
 template <typename Link>
 class record_manager
-  : noncopyable
+  : system::noncopyable
 {
 public:
     // This cast is a VC++ workaround is OK because Link must be unsigned.
@@ -57,6 +57,9 @@ public:
 
     /// Change the number of records of this container (truncation).
     void set_count(Link value);
+
+    /// Check if link is past eof
+    bool past_eof(Link link) const;
 
     /// Allocate records and return first logical index, commit after writing.
     Link allocate(size_t count);
@@ -84,7 +87,7 @@ private:
 
     // Record count is protected by mutex.
     Link record_count_;
-    mutable shared_mutex mutex_;
+    mutable system::shared_mutex mutex_;
 };
 
 } // namespace database

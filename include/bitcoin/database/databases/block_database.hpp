@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -22,7 +22,7 @@
 #include <atomic>
 #include <cstddef>
 #include <boost/filesystem.hpp>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/block_state.hpp>
 #include <bitcoin/database/define.hpp>
 #include <bitcoin/database/memory/file_storage.hpp>
@@ -44,6 +44,8 @@ public:
     block_database(const path& map_filename,
         const path& candidate_index_filename,
         const path& confirmed_index_filename, const path& tx_index_filename,
+        size_t table_minimum, size_t candidate_index_minimum,
+        size_t confirmed_index_minimum, size_t tx_index_minimum,
         size_t buckets, size_t expansion);
 
     /// Close the database (all threads must first be stopped).
@@ -77,50 +79,51 @@ public:
     block_result get(size_t height, bool candidate) const;
 
     /// Fetch block by hash.
-    block_result get(const hash_digest& hash) const;
+    block_result get(const system::hash_digest& hash) const;
 
     /// Populate header metadata for the given header.
-    void get_header_metadata(const chain::header& header) const;
+    void get_header_metadata(const system::chain::header& header) const;
 
     // Writers.
     // ------------------------------------------------------------------------
 
     /// Store header, validated at height, candidate, pending (but unindexed).
-    void store(const chain::header& header, size_t height,
+    void store(const system::chain::header& header, size_t height,
         uint32_t median_time_past);
 
     /// Populate pooled block transaction references, state is unchanged.
-    bool update(const chain::block& block);
+    bool update(const system::chain::block& block);
 
     /// Promote pooled block to valid|invalid and set code.
-    bool validate(const hash_digest& hash, const code& error);
+    bool validate(const system::hash_digest& hash, const system::code& error);
 
     /// Promote pooled|candidate block to candidate|confirmed respectively.
-    bool index(const hash_digest& hash, size_t height, bool candidate);
+    bool promote(const system::hash_digest& hash, size_t height, bool candidate);
 
     /// Demote candidate|confirmed header to pooled|pooled (not candidate).
-    bool unindex(const hash_digest& hash, size_t height, bool candidate);
+    bool demote(const system::hash_digest& hash, size_t height,
+        bool candidate);
 
 private:
-    typedef hash_digest key_type;
+    typedef system::hash_digest key_type;
     typedef array_index link_type;
     typedef record_manager<link_type> manager_type;
     typedef list_element<const manager_type, link_type, key_type> const_element;
     typedef hash_table<manager_type, array_index, link_type, key_type> record_map;
 
-    typedef message::compact_block::short_id_list short_id_list;
+    typedef system::message::compact_block::short_id_list short_id_list;
 
-    uint8_t index(const_element& element, bool positive, bool candidate);
-    link_type associate(const chain::transaction::list& transactions);
-    void store(const chain::header& header, size_t height,
+    link_type associate(const system::chain::transaction::list& transactions);
+    void promote(const_element& element, bool positive, bool candidate);
+    void store(const system::chain::header& header, size_t height,
         uint32_t median_time_past, uint32_t checksum, link_type tx_start,
         size_t tx_count, uint8_t status);
 
     // Index Utilities.
     bool read_top(size_t& out_height, const manager_type& manager) const;
-    link_type read_index(size_t height, const manager_type& manager) const;
-    void pop_index(size_t height, manager_type& manager);
-    void push_index(link_type index, size_t height, manager_type& manager);
+    link_type read_link(size_t height, const manager_type& manager) const;
+    void pop_link(link_type link, size_t height, manager_type& manager);
+    void push_link(link_type link, size_t height, manager_type& manager);
 
     static const size_t prefix_size_;
 
@@ -143,7 +146,7 @@ private:
     manager_type tx_index_;
 
     // This provides atomicity for checksum, tx_start, tx_count, state.
-    mutable shared_mutex metadata_mutex_;
+    mutable system::shared_mutex metadata_mutex_;
 };
 
 } // namespace database

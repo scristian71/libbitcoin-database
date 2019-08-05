@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -25,6 +25,7 @@
 
 using namespace bc;
 using namespace bc::database;
+using namespace bc::system;
 
 BOOST_AUTO_TEST_SUITE(hash_table_header_tests)
 
@@ -47,9 +48,9 @@ BOOST_AUTO_TEST_CASE(hash_table_header__create__always__sets_minimum_file_size)
     hash_table_header<uint32_t, uint32_t> header(file, 10u);
 
     BOOST_REQUIRE(file.open());
-    BOOST_REQUIRE_EQUAL(file.size(), 0u);
+    BOOST_REQUIRE_EQUAL(file.capacity(), 0u);
     BOOST_REQUIRE(header.create());
-    BOOST_REQUIRE_GE(file.size(), header.size());
+    BOOST_REQUIRE_GE(file.capacity(), header.size());
 }
 
 BOOST_AUTO_TEST_CASE(hash_table_header__create__always__sets_bucket_count)

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -44,7 +44,7 @@ enum block_state : uint8_t
 
 // validation states
 
-// This is not the same as !valid (could be pent).
+// This is not the same as !valid (could be spent).
 inline bool is_failed(uint8_t state)
 {
     return (state & block_state::failed) != 0;

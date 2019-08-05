@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -19,7 +19,7 @@
 #include <bitcoin/database/result/address_result.hpp>
 
 #include <cstdint>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/databases/transaction_database.hpp>
 #include <bitcoin/database/memory/memory.hpp>
 #include <bitcoin/database/result/address_iterator.hpp>
@@ -27,8 +27,10 @@
 namespace libbitcoin {
 namespace database {
 
+using namespace bc::system;
+
 address_result::address_result(const const_value_type& element,
-    const short_hash& hash)
+    const hash_digest& hash)
   : hash_(hash), element_(element)
 {
 }
@@ -38,7 +40,7 @@ address_result::operator bool() const
     return element_;
 }
 
-const short_hash& address_result::hash() const
+const hash_digest& address_result::hash() const
 {
     return hash_;
 }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -28,6 +28,7 @@
     #include <stddef.h>
     #include <sys/mman.h>
 #endif
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <fcntl.h>
@@ -37,7 +38,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <boost/filesystem.hpp>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/memory/accessor.hpp>
 #include <bitcoin/database/memory/memory.hpp>
 
@@ -48,11 +49,16 @@ static_assert(sizeof(void*) == sizeof(uint64_t), "Not a 64 bit system!");
 namespace libbitcoin {
 namespace database {
 
+using namespace bc::system;
+
 #define FAIL -1
 #define INVALID_HANDLE -1
 
 // The percentage increase, e.g. 50 is 150% of the target size.
 const size_t file_storage::default_expansion = 50;
+
+// The default minimum file size.
+const uint64_t file_storage::default_capacity = 1;
 
 size_t file_storage::file_size(int file_handle)
 {
@@ -112,7 +118,7 @@ bool file_storage::handle_error(const std::string& context,
 void file_storage::log_mapping() const
 {
     LOG_DEBUG(LOG_DATABASE)
-        << "Mapping: " << filename_ << " [" << file_size_ << "] ("
+        << "Mapping: " << filename_ << " [" << capacity_ << "] ("
         << page() << ")";
 }
 
@@ -138,23 +144,25 @@ void file_storage::log_unmapped() const
 {
     LOG_DEBUG(LOG_DATABASE)
         << "Unmapped: " << filename_ << " [" << logical_size_ << ", "
-        << file_size_ << "]";
+        << capacity_ << "]";
 }
 
 file_storage::file_storage(const path& filename)
-  : file_storage(filename, default_expansion)
+  : file_storage(filename, default_capacity, default_expansion)
 {
 }
 
 // mmap documentation: tinyurl.com/hnbw8t5
-file_storage::file_storage(const path& filename, size_t expansion)
+file_storage::file_storage(const path& filename, size_t minimum,
+    size_t expansion)
   : file_handle_(open_file(filename)),
+    minimum_(minimum),
     expansion_(expansion),
     filename_(filename),
     closed_(true),
     data_(nullptr),
-    file_size_(file_size(file_handle_)),
-    logical_size_(file_size_)
+    capacity_(file_size(file_handle_)),
+    logical_size_(capacity_)
 {
 }
 
@@ -187,7 +195,8 @@ bool file_storage::open()
     std::string error_name;
 
     // Initialize data_.
-    if (!map(file_size_))
+    // For unknown reason madvise(minimum_) with large value fails on linux.
+    if (!map(capacity_))
         error_name = "map";
     else if (madvise(data_, 0, MADV_RANDOM) == FAIL)
         error_name = "madvise";
@@ -261,11 +270,11 @@ bool file_storage::close()
 
     closed_ = true;
 
-    if (logical_size_ > file_size_)
+    if (logical_size_ > capacity_)
         error_name = "fit";
     else if (msync(data_, logical_size_, MS_SYNC) == FAIL)
         error_name = "msync";
-    else if (munmap(data_, file_size_) == FAIL)
+    else if (munmap(data_, capacity_) == FAIL)
         error_name = "munmap";
     else if (ftruncate(file_handle_, logical_size_) == FAIL)
         error_name = "ftruncate";
@@ -297,12 +306,21 @@ bool file_storage::closed() const
 // Operations.
 // ----------------------------------------------------------------------------
 
-size_t file_storage::size() const
+size_t file_storage::capacity() const
 {
     // Critical Section
     ///////////////////////////////////////////////////////////////////////////
     shared_lock lock(mutex_);
-    return file_size_;
+    return capacity_;
+    ///////////////////////////////////////////////////////////////////////////
+}
+
+size_t file_storage::logical() const
+{
+    // Critical Section
+    ///////////////////////////////////////////////////////////////////////////
+    shared_lock lock(mutex_);
+    return logical_size_;
     ///////////////////////////////////////////////////////////////////////////
 }
 
@@ -322,15 +340,15 @@ memory_ptr file_storage::access()
 }
 
 // Throws runtime_error if insufficient space.
-memory_ptr file_storage::resize(size_t size)
+memory_ptr file_storage::resize(size_t required)
 {
-    return reserve(size, 0);
+    return reserve(required, 0, 0);
 }
 
 // Throws runtime_error if insufficient space.
-memory_ptr file_storage::reserve(size_t size)
+memory_ptr file_storage::reserve(size_t required)
 {
-    return reserve(size, expansion_);
+    return reserve(required, minimum_, expansion_);
 }
 
 // Throws runtime_error if insufficient space.
@@ -339,7 +357,8 @@ memory_ptr file_storage::reserve(size_t size)
 // in one would require rolling back preceding write operations in others.
 // To handle this situation without database corruption would require predicting
 // the required allocation and all resizing before writing a block.
-memory_ptr file_storage::reserve(size_t size, size_t expansion)
+memory_ptr file_storage::reserve(size_t required, size_t minimum,
+    size_t expansion)
 {
     // Internally preventing resize during close is not possible because of
     // cross-file integrity. So we must coalesce all threads before closing.
@@ -355,11 +374,12 @@ memory_ptr file_storage::reserve(size_t size, size_t expansion)
         throw std::runtime_error("Resize failure, store already closed.");
     }
 
-    if (size > file_size_)
+    if (required > capacity_)
     {
         // TODO: manage overflow (requires ceiling_multiply).
         // Expansion is an integral number that represents a real number factor.
-        const size_t target = size * ((expansion + 100.0) / 100.0);
+        const size_t resize = required * ((expansion + 100.0) / 100.0);
+        const size_t target = std::max(minimum, resize);
 
         mutex_.unlock_upgrade_and_lock();
         //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -376,7 +396,7 @@ memory_ptr file_storage::reserve(size_t size, size_t expansion)
         mutex_.unlock_and_lock_upgrade();
     }
 
-    logical_size_ = size;
+    logical_size_ = required;
     memory->assign(data_);
 
     // Always return in shared lock state.
@@ -402,15 +422,19 @@ size_t file_storage::page() const
     if (errno != 0)
         handle_error("sysconf", filename_);
 
-    BITCOIN_ASSERT(page_size <= max_size_t);
-    return static_cast<size_t>(page_size == -1 ? 0 : page_size);
+    // Check for negative value so that later we can promote to unsigned
+    if (page_size == -1)
+        return 0;
+    
+    BITCOIN_ASSERT(static_cast<uint64_t>(page_size) <= max_size_t);
+    return static_cast<size_t>(page_size);
 #endif
 }
 
 bool file_storage::unmap()
 {
-    const auto success = (munmap(data_, file_size_) != FAIL);
-    file_size_ = 0;
+    const auto success = (munmap(data_, capacity_) != FAIL);
+    capacity_ = 0;
     data_ = nullptr;
     return success;
 }
@@ -429,7 +453,7 @@ bool file_storage::map(size_t size)
 bool file_storage::remap(size_t size)
 {
 #ifdef MREMAP_MAYMOVE
-    data_ = reinterpret_cast<uint8_t*>(mremap(data_, file_size_, size,
+    data_ = reinterpret_cast<uint8_t*>(mremap(data_, capacity_, size,
         MREMAP_MAYMOVE));
 
     return validate(size);
@@ -466,12 +490,12 @@ bool file_storage::validate(size_t size)
 {
     if (data_ == MAP_FAILED)
     {
-        file_size_ = 0;
+        capacity_ = 0;
         data_ = nullptr;
         return false;
     }
 
-    file_size_ = size;
+    capacity_ = size;
     return true;
 }
 

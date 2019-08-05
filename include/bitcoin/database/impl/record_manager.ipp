@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -20,7 +20,7 @@
 #define LIBBITCOIN_DATABASE_RECORD_MANAGER_IPP
 
 #include <cstddef>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/memory/memory.hpp>
 #include <bitcoin/database/memory/storage.hpp>
 
@@ -49,7 +49,7 @@ bool record_manager<Link>::create()
 {
     // Critical Section
     ///////////////////////////////////////////////////////////////////////////
-    unique_lock lock(mutex_);
+    system::unique_lock lock(mutex_);
 
     // Existing file record count is nonzero.
     if (record_count_ != 0)
@@ -67,13 +67,13 @@ bool record_manager<Link>::start()
 {
     // Critical Section
     ///////////////////////////////////////////////////////////////////////////
-    unique_lock lock(mutex_);
+    system::unique_lock lock(mutex_);
 
     read_count();
     const auto minimum = header_size_ + link_to_position(record_count_);
 
     // Records size does not exceed file size.
-    return minimum <= file_.size();
+    return minimum <= file_.capacity();
     ///////////////////////////////////////////////////////////////////////////
 }
 
@@ -82,7 +82,7 @@ void record_manager<Link>::commit()
 {
     // Critical Section
     ///////////////////////////////////////////////////////////////////////////
-    unique_lock lock(mutex_);
+    system::unique_lock lock(mutex_);
     write_count();
     ///////////////////////////////////////////////////////////////////////////
 }
@@ -92,7 +92,7 @@ Link record_manager<Link>::count() const
 {
     // Critical Section
     ///////////////////////////////////////////////////////////////////////////
-    shared_lock lock(mutex_);
+    system::shared_lock lock(mutex_);
     return record_count_;
     ///////////////////////////////////////////////////////////////////////////
 }
@@ -102,7 +102,7 @@ void record_manager<Link>::set_count(Link value)
 {
     // Critical Section
     ///////////////////////////////////////////////////////////////////////////
-    unique_lock lock(mutex_);
+    system::unique_lock lock(mutex_);
     BITCOIN_ASSERT(value <= record_count_);
     record_count_ = value;
     ///////////////////////////////////////////////////////////////////////////
@@ -115,7 +115,7 @@ Link record_manager<Link>::allocate(size_t count)
 {
     // Critical Section
     ///////////////////////////////////////////////////////////////////////////
-    unique_lock lock(mutex_);
+    system::unique_lock lock(mutex_);
 
     // Always write after the last index.
     const auto next_record_index = record_count_;
@@ -134,13 +134,19 @@ Link record_manager<Link>::allocate(size_t count)
 template <typename Link>
 memory_ptr record_manager<Link>::get(Link link) const
 {
-    // If record >= count() then we should still be within the file. The
-    // condition implies a block has been unconfirmed while reading it.
+    // Ensure requested position is within the file.
+    // We avoid a runtime error here to optimize out the count lock.
+    BITCOIN_ASSERT_MSG(!past_eof(link), "Read past end of file.");
 
-    // The accessor must remain in scope until the end of the block.
     const auto memory = file_.access();
     memory->increment(header_size_ + link_to_position(link));
     return memory;
+}
+
+template <typename Link>
+bool record_manager<Link>::past_eof(Link link) const
+{
+    return link >= count();
 }
 
 // privates
@@ -149,12 +155,12 @@ memory_ptr record_manager<Link>::get(Link link) const
 template <typename Link>
 void record_manager<Link>::read_count()
 {
-    BITCOIN_ASSERT(header_size_ + sizeof(Link) <= file_.size());
+    BITCOIN_ASSERT(header_size_ + sizeof(Link) <= file_.capacity());
 
     // The accessor must remain in scope until the end of the block.
     const auto memory = file_.access();
     memory->increment(header_size_);
-    auto deserial = make_unsafe_deserializer(memory->buffer());
+    auto deserial = system::make_unsafe_deserializer(memory->buffer());
     record_count_ = deserial.template read_little_endian<Link>();
 }
 
@@ -162,12 +168,12 @@ void record_manager<Link>::read_count()
 template <typename Link>
 void record_manager<Link>::write_count()
 {
-    BITCOIN_ASSERT(header_size_ + sizeof(Link) <= file_.size());
+    BITCOIN_ASSERT(header_size_ + sizeof(Link) <= file_.capacity());
 
     // The accessor must remain in scope until the end of the block.
     const auto memory = file_.access();
     memory->increment(header_size_);
-    auto serial = make_unsafe_serializer(memory->buffer());
+    auto serial = system::make_unsafe_serializer(memory->buffer());
     serial.template write_little_endian<Link>(record_count_);
 }
 

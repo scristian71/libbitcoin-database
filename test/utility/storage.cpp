@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -23,6 +23,7 @@
 
 using namespace bc;
 using namespace bc::database;
+using namespace bc::system;
 
 namespace test {
 
@@ -90,7 +91,12 @@ bool storage::closed() const
     return closed_;
 }
 
-size_t storage::size() const
+size_t storage::capacity() const
+{
+    return logical();
+}
+
+size_t storage::logical() const
 {
     shared_lock lock(mutex_);
     return buffer_.size();

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -26,7 +26,8 @@
 namespace libbitcoin {
 namespace database {
 
-using namespace bc::chain;
+using namespace bc::system;
+using namespace bc::system::chain;
 
 transaction_iterator::transaction_iterator(const manager& records,
     array_index start, size_t count)

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -21,7 +21,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <boost/filesystem.hpp>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 #include <bitcoin/database/block_state.hpp>
 #include <bitcoin/database/databases/transaction_database.hpp>
 #include <bitcoin/database/define.hpp>
@@ -52,7 +52,8 @@
 namespace libbitcoin {
 namespace database {
 
-using namespace bc::chain;
+using namespace bc::system;
+using namespace bc::system::chain;
 
 static const auto header_size = header::satoshi_fixed_size();
 static constexpr auto median_time_past_size = sizeof(uint32_t);
@@ -67,7 +68,7 @@ static const auto state_offset = height_offset + height_size;
 static const auto checksum_offset = state_offset + state_size;
 static const auto transactions_offset = checksum_offset + checksum_size;
 
-// Total size of block header and metadta storage.
+// Total size of block header and metadata storage.
 static const auto block_size = header_size + median_time_past_size +
     height_size + state_size + checksum_size + tx_start_size + tx_count_size;
 
@@ -75,20 +76,24 @@ static const auto block_size = header_size + median_time_past_size +
 // The block database keys off of block hash and has block value.
 block_database::block_database(const path& map_filename,
     const path& candidate_index_filename, const path& confirmed_index_filename,
-    const path& tx_index_filename, size_t buckets, size_t expansion)
-  : hash_table_file_(map_filename, expansion),
+    const path& tx_index_filename, size_t table_minimum,
+    size_t candidate_index_minimum, size_t confirmed_index_minimum,
+    size_t tx_index_minimum, size_t buckets, size_t expansion)
+  : hash_table_file_(map_filename, table_minimum, expansion),
     hash_table_(hash_table_file_, buckets, block_size),
 
     // Array storage.
-    candidate_index_file_(candidate_index_filename, expansion),
+    candidate_index_file_(candidate_index_filename,
+        candidate_index_minimum, expansion),
     candidate_index_(candidate_index_file_, 0, sizeof(link_type)),
 
     // Array storage.
-    confirmed_index_file_(confirmed_index_filename, expansion),
+    confirmed_index_file_(confirmed_index_filename,
+        confirmed_index_minimum, expansion),
     confirmed_index_(confirmed_index_file_, 0, sizeof(link_type)),
 
     // Array storage.
-    tx_index_file_(tx_index_filename, expansion),
+    tx_index_file_(tx_index_filename, tx_index_minimum, expansion),
     tx_index_(tx_index_file_, 0, sizeof(file_offset))
 {
 }
@@ -169,12 +174,11 @@ bool block_database::top(size_t& out_height, bool candidate) const
 block_result block_database::get(size_t height, bool candidate) const
 {
     auto& manager = candidate ? candidate_index_ : confirmed_index_;
-    const auto link = height < manager.count() ? read_index(height, manager) :
-        hash_table_.not_found;
 
     return
     {
-        hash_table_.find(link),
+        // A not_found link value produces a terminator element.
+        hash_table_.get(read_link(height, manager)),
         metadata_mutex_,
         tx_index_
     };
@@ -193,21 +197,7 @@ block_result block_database::get(const hash_digest& hash) const
 
 void block_database::get_header_metadata(const chain::header& header) const
 {
-    const auto result = get(header.hash());
-
-    // Default values presumed correct for indication of not found.
-    if (!result)
-        return;
-
-    const auto state = result.state();
-    const auto height = result.height();
-
-    header.metadata.error = result.error();
-    header.metadata.exists = true;
-    header.metadata.populated = result.transaction_count() != 0;
-    header.metadata.validated = is_valid(state) || is_failed(state);
-    header.metadata.candidate = is_candidate(state);
-    header.metadata.confirmed = is_confirmed(state);
+    get(header.hash()).set_metadata(header);
 }
 
 // Store.
@@ -235,7 +225,7 @@ void block_database::store(const chain::header& header, size_t height,
     };
 
     auto next = hash_table_.allocator();
-    const auto link = next.create(header.hash(), writer);
+    next.create(header.hash(), writer);
     hash_table_.link(next);
 }
 
@@ -385,7 +375,7 @@ static uint8_t update_confirmation_state(uint8_t original, bool positive,
     return confirmation_state | validation_state;
 }
 
-uint8_t block_database::index(const_element& element, bool positive,
+void block_database::promote(const_element& element, bool positive,
     bool candidate)
 {
     uint8_t original;
@@ -400,11 +390,10 @@ uint8_t block_database::index(const_element& element, bool positive,
         ///////////////////////////////////////////////////////////////////////
     };
 
-    uint8_t updated;
     const auto updater = [&](byte_serializer& serial)
     {
         serial.skip(state_offset);
-        updated = update_confirmation_state(original, positive, candidate);
+        auto updated = update_confirmation_state(original, positive, candidate);
 
         // Critical Section.
         ///////////////////////////////////////////////////////////////////////
@@ -415,10 +404,9 @@ uint8_t block_database::index(const_element& element, bool positive,
 
     element.read(reader);
     element.write(updater);
-    return positive ? updated : original;
 }
 
-bool block_database::index(const hash_digest& hash, size_t height,
+bool block_database::promote(const hash_digest& hash, size_t height,
     bool candidate)
 {
     BITCOIN_ASSERT(height != max_uint32);
@@ -433,29 +421,28 @@ bool block_database::index(const hash_digest& hash, size_t height,
     if (!element)
         return false;
 
-    const auto updated = index(element, true, candidate);
-    push_index(element.link(), height, manager);
+    promote(element, true, candidate);
+    push_link(element.link(), height, manager);
     return true;
 }
 
-bool block_database::unindex(const hash_digest& hash, size_t height,
+bool block_database::demote(const hash_digest& hash, size_t height,
     bool candidate)
 {
     BITCOIN_ASSERT(height != max_uint32);
     auto& manager = candidate ? candidate_index_ : confirmed_index_;
 
-    // Can only remove from the top of an index (push).
+    // Can only remove from the top of an index (pop).
     if (height + 1u != manager.count())
         return false;
 
-    // Unconfirmation implies that block is indexed, so use index.
-    auto element = hash_table_.find(read_index(height, manager));
+    auto element = hash_table_.find(hash);
 
     if (!element)
         return false;
 
-    const auto original = index(element, false, candidate);
-    pop_index(height, manager);
+    promote(element, false, candidate);
+    pop_link(element.link(), height, manager);
     return true;
 }
 
@@ -475,37 +462,39 @@ bool block_database::read_top(size_t& out_height,
     return true;
 }
 
-block_database::link_type block_database::read_index(size_t height,
+block_database::link_type block_database::read_link(size_t height,
     const manager_type& manager) const
 {
     BITCOIN_ASSERT(height < max_uint32);
-    BITCOIN_ASSERT(height < manager.count());
 
-    const auto height32 = static_cast<uint32_t>(height);
-    const auto record = manager.get(height32);
+    // A not_found link value produces a terminator element.
+    if (height >= manager.count())
+        return record_map::not_found;
+
+    const auto record = manager.get(static_cast<uint32_t>(height));
     return from_little_endian_unsafe<link_type>(record->buffer());
 }
 
-void block_database::pop_index(size_t height, manager_type& manager)
+void block_database::pop_link(link_type DEBUG_ONLY(link), size_t height,
+    manager_type& manager)
 {
     BITCOIN_ASSERT(height < max_uint32);
     BITCOIN_ASSERT(height + 1u == manager.count());
+    BITCOIN_ASSERT(link == read_link(height, manager));
 
-    const auto height32 = static_cast<uint32_t>(height);
-    manager.set_count(height32);
+    manager.set_count(static_cast<uint32_t>(height));
 }
 
-void block_database::push_index(link_type index, size_t height,
+void block_database::push_link(link_type link, size_t height,
     manager_type& manager)
 {
     BITCOIN_ASSERT(height < max_uint32);
     BITCOIN_ASSERT(height == manager.count());
 
     manager.allocate(1);
-    const auto height32 = static_cast<uint32_t>(height);
-    const auto record = manager.get(height32);
+    const auto record = manager.get(static_cast<uint32_t>(height));
     auto serial = make_unsafe_serializer(record->buffer());
-    serial.write_4_bytes_little_endian(index);
+    serial.write_4_bytes_little_endian(link);
 }
 
 } // namespace database

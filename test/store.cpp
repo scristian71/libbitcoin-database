@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -23,6 +23,7 @@
 
 using namespace bc;
 using namespace bc::database;
+using namespace bc::system;
 
 // Test directory
 #define DIRECTORY "store"
@@ -63,23 +64,6 @@ BOOST_AUTO_TEST_CASE(store__construct__flush_each_write_true__expected)
 {
     store_accessor store("", false, true);
     BOOST_REQUIRE(store.flush_each_write());
-}
-
-using namespace boost::filesystem;
-static bool create_file(const path& file_path)
-{
-    // Disallow create with existing file.
-    if (bc::ifstream(file_path.string()).good())
-        return false;
-
-    bc::ofstream file(file_path.string());
-
-    if (!file.good())
-        return false;
-
-    // Write one byte so file is nonzero size (for memory map validation).
-    file.put('x');
-    return true;
 }
 
 BOOST_AUTO_TEST_CASE(store__construct__no_indexes__expected_files)

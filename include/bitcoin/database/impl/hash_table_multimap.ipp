@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -64,7 +64,7 @@ hash_table_multimap<Index, Link, Key>::find(const Key& key) const
     {
         // Critical Section.
         ///////////////////////////////////////////////////////////////////////
-        shared_lock lock(root_mutex_);
+        system::shared_lock lock(root_mutex_);
         first = deserial.template read_little_endian<Link>();
         ///////////////////////////////////////////////////////////////////////
     };
@@ -75,9 +75,9 @@ hash_table_multimap<Index, Link, Key>::find(const Key& key) const
 
 template <typename Index, typename Link, typename Key>
 typename hash_table_multimap<Index, Link, Key>::const_value_type
-hash_table_multimap<Index, Link, Key>::find(Link link) const
+hash_table_multimap<Index, Link, Key>::get(Link link) const
 {
-    const auto element = map_.find(link);
+    const auto element = map_.get(link);
 
     if (!element)
         return { manager_, element.not_found, list_mutex_ };
@@ -87,7 +87,7 @@ hash_table_multimap<Index, Link, Key>::find(Link link) const
     {
         // Critical Section.
         ///////////////////////////////////////////////////////////////////////
-        shared_lock lock(root_mutex_);
+        system::shared_lock lock(root_mutex_);
         first = deserial.template read_little_endian<Link>();
         ///////////////////////////////////////////////////////////////////////
     };
