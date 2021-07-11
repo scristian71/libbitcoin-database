@@ -1,5 +1,5 @@
 ###############################################################################
-#  Copyright (c) 2014-2019 libbitcoin-database developers (see COPYING).
+#  Copyright (c) 2014-2020 libbitcoin-database developers (see COPYING).
 #
 #         GENERATED SOURCE CODE, DO NOT EDIT EXCEPT EXPERIMENTALLY
 #
@@ -93,7 +93,7 @@ endif()
 
 # Find boost
 #------------------------------------------------------------------------------
-find_package( Boost 1.62.0 REQUIRED COMPONENTS
+find_package( Boost 1.72.0 REQUIRED COMPONENTS
     unit_test_framework )
 
 set( boost_unit_test_framework_LIBS "-lboost_unit_test_framework" )
@@ -124,22 +124,22 @@ endif()
 # Define project common library directories
 #------------------------------------------------------------------------------
 if (BUILD_SHARED_LIBS)
-    link_directories( 
+    link_directories(
         ${bitcoin_system_LIBRARY_DIRS} )
 else()
-    link_directories( 
+    link_directories(
         ${bitcoin_system_STATIC_LIBRARY_DIRS} )
 endif()
 
 # Define project common libraries/linker flags.
 #------------------------------------------------------------------------------
 if (BUILD_SHARED_LIBS)
-    link_libraries( 
+    link_libraries(
         "-fstack-protector"
         "-fstack-protector-all"
         ${bitcoin_system_LIBRARIES} )
 else()
-    link_libraries( 
+    link_libraries(
         "-fstack-protector"
         "-fstack-protector-all"
         ${bitcoin_system_STATIC_LIBRARIES} )
@@ -154,17 +154,19 @@ add_library( ${CANONICAL_LIB_NAME}
     "../../src/unspent_outputs.cpp"
     "../../src/unspent_transaction.cpp"
     "../../src/verify.cpp"
-    "../../src/databases/address_database.cpp"
     "../../src/databases/block_database.cpp"
+    "../../src/databases/filter_database.cpp"
+    "../../src/databases/payment_database.cpp"
     "../../src/databases/transaction_database.cpp"
     "../../src/memory/accessor.cpp"
     "../../src/memory/file_storage.cpp"
     "../../src/mman-win32/mman.c"
     "../../src/mman-win32/mman.h"
-    "../../src/result/address_iterator.cpp"
-    "../../src/result/address_result.cpp"
     "../../src/result/block_result.cpp"
+    "../../src/result/filter_result.cpp"
     "../../src/result/inpoint_iterator.cpp"
+    "../../src/result/payment_iterator.cpp"
+    "../../src/result/payment_result.cpp"
     "../../src/result/transaction_iterator.cpp"
     "../../src/result/transaction_result.cpp" )
 
@@ -204,8 +206,9 @@ if (with-tests)
         "../../test/store.cpp"
         "../../test/unspent_outputs.cpp"
         "../../test/unspent_transaction.cpp"
-        "../../test/databases/address_database.cpp"
         "../../test/databases/block_database.cpp"
+        "../../test/databases/filter_database.cpp"
+        "../../test/databases/payment_database.cpp"
         "../../test/databases/transaction_database.cpp"
         "../../test/memory/accessor.cpp"
         "../../test/memory/file_storage.cpp"
@@ -217,9 +220,10 @@ if (with-tests)
         "../../test/primitives/list_iterator.cpp"
         "../../test/primitives/record_manager.cpp"
         "../../test/primitives/slab_manager.cpp"
-        "../../test/result/address_iterator.cpp"
-        "../../test/result/address_result.cpp"
         "../../test/result/block_result.cpp"
+        "../../test/result/filter_result.cpp"
+        "../../test/result/payment_iterator.cpp"
+        "../../test/result/payment_result.cpp"
         "../../test/result/transaction_iterator.cpp"
         "../../test/result/transaction_result.cpp"
         "../../test/utility/storage.cpp"

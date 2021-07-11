@@ -39,6 +39,8 @@
 // [ checksum/code:4    - atomic2 ] (optional, zero if not cached, code if invalid)
 // [ tx_start:4         - atomic3 ] (array index into the transaction_index, or zero)
 // [ tx_count:2         - atomic3 ] (atomic with start, zero if block unpopulated)
+// Optional by configuration
+// [ neutrino_filter:4  - atomic4 ] (array index into the appropriate filter_database, or zero)
 
 // Record format (v3) [variable bytes] (median_time_past added in v3.3):
 // Below excludes block height index (array).
@@ -62,14 +64,17 @@ static constexpr auto state_size = sizeof(uint8_t);
 static constexpr auto checksum_size = sizeof(uint32_t);
 static constexpr auto tx_start_size = sizeof(uint32_t);
 static constexpr auto tx_count_size = sizeof(uint16_t);
+static constexpr auto neutrino_filter_size = sizeof(uint32_t);
 
 static const auto height_offset = header_size + median_time_past_size;
 static const auto state_offset = height_offset + height_size;
 static const auto checksum_offset = state_offset + state_size;
 static const auto transactions_offset = checksum_offset + checksum_size;
+static const auto neutrino_filter_offset = transactions_offset +
+    tx_start_size + tx_count_size;
 
-// Total size of block header and metadata storage.
-static const auto block_size = header_size + median_time_past_size +
+// Total size of block header and metadata storage without neutrino filter offset.
+static const auto base_block_size = header_size + median_time_past_size +
     height_size + state_size + checksum_size + tx_start_size + tx_count_size;
 
 // Blocks uses a hash table and two array indexes, all O(1).
@@ -78,9 +83,12 @@ block_database::block_database(const path& map_filename,
     const path& candidate_index_filename, const path& confirmed_index_filename,
     const path& tx_index_filename, size_t table_minimum,
     size_t candidate_index_minimum, size_t confirmed_index_minimum,
-    size_t tx_index_minimum, size_t buckets, size_t expansion)
-  : hash_table_file_(map_filename, table_minimum, expansion),
-    hash_table_(hash_table_file_, buckets, block_size),
+    size_t tx_index_minimum, uint32_t buckets, size_t expansion,
+    bool neutrino_filters)
+  : support_neutrino_filter_(neutrino_filters),
+    hash_table_file_(map_filename, table_minimum, expansion),
+    hash_table_(hash_table_file_, buckets, support_neutrino_filter_ ?
+        base_block_size + neutrino_filter_size : base_block_size),
 
     // Array storage.
     candidate_index_file_(candidate_index_filename,
@@ -96,6 +104,7 @@ block_database::block_database(const path& map_filename,
     tx_index_file_(tx_index_filename, tx_index_minimum, expansion),
     tx_index_(tx_index_file_, 0, sizeof(file_offset))
 {
+    // TODO: C4267: 'argument': conversion from 'size_t' to 'Index', possible loss of data.
 }
 
 block_database::~block_database()
@@ -180,7 +189,8 @@ block_result block_database::get(size_t height, bool candidate) const
         // A not_found link value produces a terminator element.
         hash_table_.get(read_link(height, manager)),
         metadata_mutex_,
-        tx_index_
+        tx_index_,
+        support_neutrino_filter_
     };
 }
 
@@ -191,7 +201,8 @@ block_result block_database::get(const hash_digest& hash) const
     {
         hash_table_.find(hash),
         metadata_mutex_,
-        tx_index_
+        tx_index_,
+        support_neutrino_filter_
     };
 }
 
@@ -262,7 +273,7 @@ block_database::link_type block_database::associate(
 // These are used to atomically update metadata.
 
 // Populate transaction references, state is unchanged.
-bool block_database::update(const chain::block& block)
+bool block_database::update_transactions(const chain::block& block)
 {
     auto element = hash_table_.find(block.hash());
 
@@ -304,6 +315,34 @@ static uint8_t update_validation_state(uint8_t original, bool positive)
 
     // Merge the new validation state with existing confirmation state.
     return confirmation_state | validation_state;
+}
+
+// Populate neutrino filter link.
+bool block_database::update_neutrino_filter(const hash_digest& hash,
+    file_offset link)
+{
+    if (!support_neutrino_filter_)
+        return false;
+
+    BITCOIN_ASSERT(link <= max_uint32);
+    auto element = hash_table_.find(hash);
+
+    if (!element)
+        return false;
+
+    const auto updater = [&](byte_serializer& serial)
+    {
+        serial.skip(neutrino_filter_offset);
+
+        // Critical Section.
+        ///////////////////////////////////////////////////////////////////////
+        unique_lock lock(metadata_mutex_);
+        serial.write_4_bytes_little_endian(static_cast<uint32_t>(link));
+        ///////////////////////////////////////////////////////////////////////
+    };
+
+    element.write(updater);
+    return true;
 }
 
 // Promote unvalidated block to valid|invalid based on error value.

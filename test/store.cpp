@@ -32,9 +32,9 @@ class store_accessor
   : public store
 {
 public:
-    store_accessor(const path& prefix, bool indexes=false, bool flush=false,
+    store_accessor(const path& prefix, bool indexes=false, bool neutrino=false, bool flush=false,
         bool result=true)
-      : store(prefix, indexes, flush), result_(result)
+      : store(prefix, indexes, neutrino, flush), result_(result)
     {
     }
 
@@ -62,7 +62,7 @@ BOOST_AUTO_TEST_CASE(store__construct__flush_each_write_false__expected)
 
 BOOST_AUTO_TEST_CASE(store__construct__flush_each_write_true__expected)
 {
-    store_accessor store("", false, true);
+    store_accessor store("", false, false, true);
     BOOST_REQUIRE(store.flush_each_write());
 }
 
@@ -76,16 +76,16 @@ BOOST_AUTO_TEST_CASE(store__construct__no_indexes__expected_files)
     static const std::string confirmed_index = directory + "/" + store::CONFIRMED_INDEX;
     static const std::string tx_index = directory + "/" + store::TRANSACTION_INDEX;
     static const std::string tx_table = directory + "/" + store::TRANSACTION_TABLE;
-    static const std::string address_table = directory + "/" + store::ADDRESS_TABLE;
-    static const std::string address_rows = directory + "/" + store::ADDRESS_ROWS;
+    static const std::string payment_table = directory + "/" + store::PAYMENT_TABLE;
+    static const std::string payment_rows = directory + "/" + store::PAYMENT_ROWS;
 
     BOOST_REQUIRE(!test::exists(block_table));
     BOOST_REQUIRE(!test::exists(candidate_index));
     BOOST_REQUIRE(!test::exists(confirmed_index));
     BOOST_REQUIRE(!test::exists(tx_index));
     BOOST_REQUIRE(!test::exists(tx_table));
-    BOOST_REQUIRE(!test::exists(address_table));
-    BOOST_REQUIRE(!test::exists(address_rows));
+    BOOST_REQUIRE(!test::exists(payment_table));
+    BOOST_REQUIRE(!test::exists(payment_rows));
 
     BOOST_REQUIRE(store.create());
 
@@ -94,8 +94,8 @@ BOOST_AUTO_TEST_CASE(store__construct__no_indexes__expected_files)
     BOOST_REQUIRE(test::exists(confirmed_index));
     BOOST_REQUIRE(test::exists(tx_index));
     BOOST_REQUIRE(test::exists(tx_table));
-    BOOST_REQUIRE(!test::exists(address_table));
-    BOOST_REQUIRE(!test::exists(address_rows));
+    BOOST_REQUIRE(!test::exists(payment_table));
+    BOOST_REQUIRE(!test::exists(payment_rows));
 
     BOOST_REQUIRE(store.close());
 }
@@ -110,16 +110,16 @@ BOOST_AUTO_TEST_CASE(store__construct__indexes__expected_files)
     static const std::string confirmed_index = directory + "/" + store::CONFIRMED_INDEX;
     static const std::string tx_index = directory + "/" + store::TRANSACTION_INDEX;
     static const std::string tx_table = directory + "/" + store::TRANSACTION_TABLE;
-    static const std::string address_table = directory + "/" + store::ADDRESS_TABLE;
-    static const std::string address_rows = directory + "/" + store::ADDRESS_ROWS;
+    static const std::string payment_table = directory + "/" + store::PAYMENT_TABLE;
+    static const std::string payment_rows = directory + "/" + store::PAYMENT_ROWS;
 
     BOOST_REQUIRE(!test::exists(block_table));
     BOOST_REQUIRE(!test::exists(candidate_index));
     BOOST_REQUIRE(!test::exists(confirmed_index));
     BOOST_REQUIRE(!test::exists(tx_index));
     BOOST_REQUIRE(!test::exists(tx_table));
-    BOOST_REQUIRE(!test::exists(address_table));
-    BOOST_REQUIRE(!test::exists(address_rows));
+    BOOST_REQUIRE(!test::exists(payment_table));
+    BOOST_REQUIRE(!test::exists(payment_rows));
 
     BOOST_REQUIRE(store.create());
 
@@ -128,8 +128,8 @@ BOOST_AUTO_TEST_CASE(store__construct__indexes__expected_files)
     BOOST_REQUIRE(test::exists(confirmed_index));
     BOOST_REQUIRE(test::exists(tx_index));
     BOOST_REQUIRE(test::exists(tx_table));
-    BOOST_REQUIRE(test::exists(address_table));
-    BOOST_REQUIRE(test::exists(address_rows));
+    BOOST_REQUIRE(test::exists(payment_table));
+    BOOST_REQUIRE(test::exists(payment_rows));
 
     BOOST_REQUIRE(store.close());
 }
@@ -177,7 +177,7 @@ BOOST_AUTO_TEST_CASE(store__construct__global_flush_lock__expected_files)
 BOOST_AUTO_TEST_CASE(store__construct__local_flush_lock__expected_files)
 {
     static const std::string directory = DIRECTORY "/" + TEST_NAME;
-    store_accessor store(directory, false, true);
+    store_accessor store(directory, false, false, true);
 
     static const std::string flush_lock = directory + "/" + store::FLUSH_LOCK;
     BOOST_REQUIRE(!test::exists(flush_lock));
@@ -202,7 +202,7 @@ BOOST_AUTO_TEST_CASE(store__construct__local_flush_lock__expected_files)
 BOOST_AUTO_TEST_CASE(store__construct__unbalanced_begin_write__leaves_lock_after_close)
 {
     static const std::string directory = DIRECTORY "/" + TEST_NAME;
-    store_accessor store(directory, false, true);
+    store_accessor store(directory, false, false, true);
 
     static const std::string flush_lock = directory + "/" + store::FLUSH_LOCK;
     BOOST_REQUIRE(!test::exists(flush_lock));
@@ -216,7 +216,7 @@ BOOST_AUTO_TEST_CASE(store__construct__unbalanced_begin_write__leaves_lock_after
 BOOST_AUTO_TEST_CASE(store__construct__failed_flush__expected)
 {
     static const std::string directory = DIRECTORY "/" + TEST_NAME;
-    store_accessor store(directory, false, true, false);
+    store_accessor store(directory, false, false, true, false);
 
     static const std::string flush_lock = directory + "/" + store::FLUSH_LOCK;
     BOOST_REQUIRE(!test::exists(flush_lock));
@@ -231,7 +231,7 @@ BOOST_AUTO_TEST_CASE(store__construct__failed_flush__expected)
 BOOST_AUTO_TEST_CASE(store__construct__unbalanced_end_write__success)
 {
     static const std::string directory = DIRECTORY "/" + TEST_NAME;
-    store_accessor store(directory, false, true);
+    store_accessor store(directory, false, false, true);
 
     static const std::string flush_lock = directory + "/" + store::FLUSH_LOCK;
     BOOST_REQUIRE(store.create());

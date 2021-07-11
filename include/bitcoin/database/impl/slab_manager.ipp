@@ -37,9 +37,11 @@ namespace database {
 template <typename Link>
 slab_manager<Link>::slab_manager(storage& file, size_t header_size)
   : file_(file),
-    header_size_(header_size),
+    header_size_(static_cast<Link>(header_size)),
     payload_size_(sizeof(Link))
 {
+    BITCOIN_ASSERT(header_size < not_allocated);
+    BITCOIN_ASSERT(sizeof(Link) < not_allocated);
 }
 
 template <typename Link>
@@ -86,7 +88,7 @@ void slab_manager<Link>::commit()
 }
 
 template <typename Link>
-size_t slab_manager<Link>::payload_size() const
+Link slab_manager<Link>::payload_size() const
 {
     // Critical Section
     ///////////////////////////////////////////////////////////////////////////
@@ -100,19 +102,22 @@ size_t slab_manager<Link>::payload_size() const
 template <typename Link>
 Link slab_manager<Link>::allocate(size_t size)
 {
+    BITCOIN_ASSERT(size < not_allocated);
+    const auto slab_size = static_cast<Link>(size);
+
     // Critical Section
     ///////////////////////////////////////////////////////////////////////////
     system::unique_lock lock(mutex_);
 
     // Always write after the last slab.
     const auto next_slab_position = payload_size_;
-    const size_t required_size = header_size_ + payload_size_ + size;
+    const auto required_size = header_size_ + payload_size_ + slab_size;
 
     // Currently throws runtime_error if insufficient space.
     if (!file_.reserve(required_size))
         return not_allocated;
 
-    payload_size_ += size;
+    payload_size_ += slab_size;
     return next_slab_position;
     ///////////////////////////////////////////////////////////////////////////
 }
@@ -161,6 +166,8 @@ void slab_manager<Link>::write_size() const
     const auto memory = file_.access();
     memory->increment(header_size_);
     auto serial = system::make_unsafe_serializer(memory->buffer());
+
+    // TODO: C4267: 'argument': conversion from 'size_t' to 'Integer', possible loss of data.
     serial.template write_little_endian<Link>(payload_size_);
 }
 

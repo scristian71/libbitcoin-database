@@ -46,7 +46,7 @@ public:
         const path& confirmed_index_filename, const path& tx_index_filename,
         size_t table_minimum, size_t candidate_index_minimum,
         size_t confirmed_index_minimum, size_t tx_index_minimum,
-        size_t buckets, size_t expansion);
+        uint32_t buckets, size_t expansion, bool neutrino_filters);
 
     /// Close the database (all threads must first be stopped).
     ~block_database();
@@ -92,7 +92,11 @@ public:
         uint32_t median_time_past);
 
     /// Populate pooled block transaction references, state is unchanged.
-    bool update(const system::chain::block& block);
+    bool update_transactions(const system::chain::block& block);
+
+    /// Populate filter reference, state is unchanged.
+    bool update_neutrino_filter(const system::hash_digest& hash,
+        file_offset link);
 
     /// Promote pooled block to valid|invalid and set code.
     bool validate(const system::hash_digest& hash, const system::code& error);
@@ -128,6 +132,7 @@ private:
     static const size_t prefix_size_;
 
     // Hash table used for looking up block headers by hash.
+    bool support_neutrino_filter_;
     file_storage hash_table_file_;
     record_map hash_table_;
 

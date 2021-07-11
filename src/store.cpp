@@ -37,10 +37,11 @@ const std::string store::EXCLUSIVE_LOCK = "exclusive_lock";
 const std::string store::BLOCK_TABLE = "block_table";
 const std::string store::CANDIDATE_INDEX = "candidate_index";
 const std::string store::CONFIRMED_INDEX = "confirmed_index";
+const std::string store::NEUTRINO_FILTER_TABLE = "neutrino_filter_table";
 const std::string store::TRANSACTION_INDEX = "transaction_index";
 const std::string store::TRANSACTION_TABLE = "transaction_table";
-const std::string store::ADDRESS_TABLE = "address_table";
-const std::string store::ADDRESS_ROWS = "address_rows";
+const std::string store::PAYMENT_TABLE = "payment_table";
+const std::string store::PAYMENT_ROWS = "payment_rows";
 
 // Create a single file with one byte of arbitrary data.
 static bool create_file(const path& file_path)
@@ -62,9 +63,11 @@ static bool create_file(const path& file_path)
 // Construct.
 // ------------------------------------------------------------------------
 
-store::store(const path& prefix, bool with_indexes, bool flush_each_write)
+store::store(const path& prefix, bool with_indexes, bool with_neutrino,
+    bool flush_each_write)
   : prefix_(prefix),
     with_indexes_(with_indexes),
+    with_neutrino_(with_neutrino),
     flush_each_write_(flush_each_write),
     flush_lock_(prefix / FLUSH_LOCK),
     exclusive_lock_(prefix / EXCLUSIVE_LOCK),
@@ -76,9 +79,12 @@ store::store(const path& prefix, bool with_indexes, bool flush_each_write)
     transaction_index(prefix / TRANSACTION_INDEX),
     transaction_table(prefix / TRANSACTION_TABLE),
 
+    // Optional store.
+    neutrino_filter_table(prefix / NEUTRINO_FILTER_TABLE),
+
     // Optional indexes.
-    address_table(prefix / ADDRESS_TABLE),
-    address_rows(prefix / ADDRESS_ROWS)
+    payment_table(prefix / PAYMENT_TABLE),
+    payment_rows(prefix / PAYMENT_ROWS)
 {
 }
 
@@ -96,15 +102,16 @@ bool store::create()
         create_file(candidate_index) &&
         create_file(confirmed_index) &&
         create_file(transaction_index) &&
-        create_file(transaction_table);
+        create_file(transaction_table) &&
+        (with_neutrino_ ? create_file(neutrino_filter_table) : true);
 
     if (!with_indexes_)
         return created;
 
     return
         created &&
-        create_file(address_table) &&
-        create_file(address_rows);
+        create_file(payment_table) &&
+        create_file(payment_rows);
 }
 
 bool store::open()

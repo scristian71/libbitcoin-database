@@ -25,8 +25,9 @@
 #include <memory>
 #include <boost/filesystem.hpp>
 #include <bitcoin/system.hpp>
-#include <bitcoin/database/databases/address_database.hpp>
 #include <bitcoin/database/databases/block_database.hpp>
+#include <bitcoin/database/databases/filter_database.hpp>
+#include <bitcoin/database/databases/payment_database.hpp>
 #include <bitcoin/database/databases/transaction_database.hpp>
 #include <bitcoin/database/define.hpp>
 #include <bitcoin/database/settings.hpp>
@@ -42,7 +43,7 @@ class BCD_API data_base
 public:
     typedef std::function<void(const system::code&)> result_handler;
 
-    data_base(const settings& settings, bool catalog);
+    data_base(const settings& settings, bool catalog, bool filter);
 
     // Open and close.
     // ------------------------------------------------------------------------
@@ -70,8 +71,11 @@ public:
 
     const transaction_database& transactions() const;
 
+    /// Invalid if neutrino not initialized.
+    const filter_database& neutrino_filters() const;
+
     /// Invalid if indexes not initialized.
-    const address_database& addresses() const;
+    const payment_database& payments() const;
 
     // Node writers.
     // ------------------------------------------------------------------------
@@ -100,10 +104,6 @@ public:
     /// Mark candidate block, txs and outputs spent by them as candidate.
     system::code candidate(const system::chain::block& block);
 
-    // BLOCK ORGANIZER (candidate)
-    /// Add payments of transactions of the block to the payment index.
-    system::code catalog(const system::chain::block& block);
-
     // BLOCK ORGANIZER (reorganize)
     /// Reorganize the block index to the specified fork point.
     system::code reorganize(const system::config::checkpoint& fork_point,
@@ -114,16 +114,19 @@ public:
     /// Confirm candidate block with confirmed parent.
     system::code confirm(const system::hash_digest& block_hash,
         size_t height);
-    
+
     // TRANSACTION ORGANIZER (store)
-    /// Store unconfirmed tx/payments that was verified with the given forks.
+    /// Store unconfirmed tx/payments that were verified with the given forks.
     system::code store(const system::chain::transaction& tx, uint32_t forks);
 
     // TRANSACTION ORGANIZER (store)
-    /// Add payments of the transaction to the payment index.
+    /// Add transaction payment to the payment index.
     system::code catalog(const system::chain::transaction& tx);
 
 protected:
+    typedef std::function<system::code(const block_result&, file_offset&)>
+        filter_key_extractor;
+
     void start();
     void commit();
     bool flush() const override;
@@ -149,13 +152,28 @@ protected:
     system::code push_block(const system::chain::block& block, size_t height);
     system::code pop_block(system::chain::block& out_block, size_t height);
 
+    /// Add transaction payments of the block to the payment index.
+    system::code catalog(const system::chain::block& block);
+
+    // Neutrino filters.
+    // ------------------------------------------------------------------------
+
+    system::code populate_filter_cache(filter_database& database);
+    system::code update_filter_cache(filter_database& database,
+        const system::config::checkpoint& fork_point,
+        system::block_const_ptr_list_const_ptr incoming,
+        system::block_const_ptr_list_ptr outgoing);
+
+    // Add neutrino filter to the filters index.
+    system::code filter(const system::chain::block& block);
 
     // Databases.
     // ------------------------------------------------------------------------
 
     std::shared_ptr<block_database> blocks_;
     std::shared_ptr<transaction_database> transactions_;
-    std::shared_ptr<address_database> addresses_;
+    std::shared_ptr<filter_database> filters_;
+    std::shared_ptr<payment_database> payments_;
 
 private:
     system::chain::transaction::list to_transactions(
@@ -163,6 +181,7 @@ private:
 
     std::atomic<bool> closed_;
     const bool catalog_;
+    const bool filter_;
     const settings& settings_;
 
     // Used to prevent unsafe concurrent writes.

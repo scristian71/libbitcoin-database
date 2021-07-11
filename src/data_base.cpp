@@ -49,7 +49,7 @@ using namespace bc::system::wallet;
 // (2) blocks_.get(spender_height)->transactions().
 // (3) (transactions()->inputs()->previous_output() == outpoint)->inpoint.
 // This has the same average cost as 1 output-query + 1/2 block-query.
-// This will reduce server indexing by 30% (address indexing only).
+// This will reduce server indexing by 30% (payment indexing only).
 // Could make index optional, redirecting queries if not present.
 
 // A failure after begin_write is returned without calling end_write.
@@ -58,17 +58,18 @@ using namespace bc::system::wallet;
 // Construct.
 // ----------------------------------------------------------------------------
 
-data_base::data_base(const settings& settings, bool catalog)
+data_base::data_base(const settings& settings, bool catalog, bool filter)
   : closed_(true),
     catalog_(catalog),
+    filter_(filter),
     settings_(settings),
-    database::store(settings.directory, catalog, settings.flush_writes)
+    database::store(settings.directory, catalog, filter_, settings.flush_writes)
 {
     LOG_DEBUG(LOG_DATABASE)
         << "Buckets: "
         << "block [" << settings.block_table_buckets << "], "
         << "transaction [" << settings.transaction_table_buckets << "], "
-        << "address [" << settings.address_table_buckets << "]";
+        << "payment [" << settings.payment_table_buckets << "]";
 }
 
 data_base::~data_base()
@@ -96,8 +97,11 @@ bool data_base::create(const block& genesis)
     // These leave the databases open.
     auto created = blocks_->create() && transactions_->create();
 
+    if (filter_)
+        created &= filters_->create();
+
     if (catalog_)
-        created &= addresses_->create();
+        created &= payments_->create();
 
     created &= push(genesis) == error::success;
 
@@ -121,8 +125,11 @@ bool data_base::open()
 
     auto opened = blocks_->open() && transactions_->open();
 
+    if (filter_)
+        opened &= filters_->open() && populate_filter_cache(*filters_);
+
     if (catalog_)
-        opened &= addresses_->open();
+        opened &= payments_->open();
 
     if (!opened)
         return false;
@@ -146,7 +153,8 @@ void data_base::start()
         settings_.confirmed_index_size,
         settings_.transaction_index_size,
         settings_.block_table_buckets,
-        settings_.file_growth_rate);
+        settings_.file_growth_rate,
+        filter_);
 
     transactions_ = std::make_shared<transaction_database>(
         transaction_table,
@@ -155,14 +163,24 @@ void data_base::start()
         settings_.file_growth_rate,
         settings_.cache_capacity);
 
+    if (filter_)
+    {
+        filters_ = std::make_shared<filter_database>(
+            neutrino_filter_table,
+            settings_.neutrino_filter_table_size,
+            settings_.neutrino_filter_table_buckets,
+            settings_.file_growth_rate,
+            neutrino_filter_type);
+    }
+
     if (catalog_)
     {
-        addresses_ = std::make_shared<address_database>(
-            address_table,
-            address_rows,
-            settings_.address_table_size,
-            settings_.address_index_size,
-            settings_.address_table_buckets,
+        payments_ = std::make_shared<payment_database>(
+            payment_table,
+            payment_rows,
+            settings_.payment_table_size,
+            settings_.payment_index_size,
+            settings_.payment_table_buckets,
             settings_.file_growth_rate);
     }
 }
@@ -171,7 +189,10 @@ void data_base::start()
 void data_base::commit()
 {
     if (catalog_)
-        addresses_->commit();
+        payments_->commit();
+
+    if (filter_)
+        filters_->commit();
 
     transactions_->commit();
     blocks_->commit();
@@ -189,8 +210,11 @@ bool data_base::flush() const
 
     auto flushed = blocks_->flush() && transactions_->flush();
 
+    if (filter_)
+        flushed &= filters_->flush();
+
     if (catalog_)
-        flushed &= addresses_->flush();
+        flushed &= payments_->flush();
 
     LOG_DEBUG(LOG_DATABASE)
         << "Write flushed to disk: "
@@ -210,8 +234,11 @@ bool data_base::close()
 
     auto closed = blocks_->close() && transactions_->close();
 
+    if (filter_)
+        closed &= filters_->close();
+
     if (catalog_)
-        closed &= addresses_->close();
+        closed &= payments_->close();
 
     return closed && store::close();
     // Unlock exclusive file access and conditionally the global flush lock.
@@ -232,11 +259,16 @@ const transaction_database& data_base::transactions() const
     return *transactions_;
 }
 
-// TODO: rename addresses to payments generally.
-// Invalid if indexes not initialized.
-const address_database& data_base::addresses() const
+// Invalid if neutrino filters not initialized.
+const filter_database& data_base::neutrino_filters() const
 {
-    return *addresses_;
+    return *filters_;
+}
+
+// Invalid if indexes not initialized.
+const payment_database& data_base::payments() const
+{
+    return *payments_;
 }
 
 // Public writers.
@@ -261,43 +293,65 @@ code data_base::catalog(const transaction& tx)
     if (!begin_write())
         return error::store_lock_failure;
 
-    addresses_->catalog(tx);
-    addresses_->commit();
+    payments_->catalog(tx);
+    payments_->commit();
 
     return end_write() ? error::success : error::store_lock_failure;
     //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     ///////////////////////////////////////////////////////////////////////////
 }
 
+// Called from candidate and push.
 code data_base::catalog(const block& block)
 {
     code ec;
     if (!catalog_)
         return ec;
 
-    // Critical Section
-    ///////////////////////////////////////////////////////////////////////////
-    conditional_lock lock(flush_each_write());
-
     const auto start = asio::steady_clock::now();
-    if ((ec = verify_exists(*blocks_, block.header())))
-        return ec;
 
-    //vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-    if (!begin_write())
-        return error::store_lock_failure;
-
-    // Existence check prevents duplicated indexing.
+    // Existence checks prevent duplicated indexing.
     for (const auto& tx: block.transactions())
         if (!tx.metadata.cataloged)
-            addresses_->catalog(tx);
+            payments_->catalog(tx);
 
-    addresses_->commit();
+    payments_->commit();
 
     block.metadata.catalog = asio::steady_clock::now() - start;
-    return end_write() ? error::success : error::store_lock_failure;
-    //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    ///////////////////////////////////////////////////////////////////////////
+    return error::success;
+}
+
+// Called from candidate and push.
+system::code data_base::filter(const block& block)
+{
+    code ec;
+    if (!filter_)
+        return ec;
+
+    const auto start = asio::steady_clock::now();
+
+    const auto neutrino_filter = block.header().metadata.neutrino_filter;
+
+    if (!neutrino_filter)
+        return error::operation_failed;
+
+    const auto link = neutrino_filter->metadata.link;
+    const auto exists = link != block_filter::validation::unlinked;
+
+    // Existence check prevents duplicated indexing.
+    if (!exists)
+    {
+        if (!filters_->store(*neutrino_filter))
+            return error::operation_failed;
+
+        if (!blocks_->update_neutrino_filter(block.hash(), link))
+            return error::operation_failed;
+    }
+
+    filters_->commit();
+
+    block.metadata.filter = asio::steady_clock::now() - start;
+    return error::success;
 }
 
 code data_base::store(const transaction& tx, uint32_t forks)
@@ -392,11 +446,13 @@ code data_base::update(const chain::block& block, size_t height)
     if (!transactions_->store(block.transactions()))
         return error::operation_failed;
 
+    // Store the block's filter data (header, filter).
+
     // Update the block's transaction associations (not its state).
-    if (!blocks_->update(block))
+    if (!blocks_->update_transactions(block))
         return error::operation_failed;
 
-    commit();
+    transactions_->commit();
 
     block.metadata.associate = asio::steady_clock::now() - start;
     return end_write() ? error::success : error::store_lock_failure;
@@ -459,6 +515,12 @@ code data_base::candidate(const block& block)
         if (!transactions_->candidate(tx.metadata.link))
             return error::operation_failed;
 
+    if ((ec = filter(block)))
+        return ec;
+
+    if ((ec = catalog(block)))
+        return ec;
+
     header.metadata.error = error::success;
     header.metadata.validated = true;
 
@@ -480,7 +542,13 @@ code data_base::reorganize(const config::checkpoint& fork_point,
         pop_above(outgoing, fork_point) &&
         push_all(incoming, fork_point);
 
-    return result ? error::success : error::operation_failed;
+    if (!result)
+        return error::operation_failed;
+
+    if (filter_)
+        return update_filter_cache(*filters_, fork_point, incoming, outgoing);
+
+    return error::success;
 }
 
 // Store, update, validate and confirm the presumed valid block.
@@ -509,7 +577,7 @@ code data_base::push(const block& block, size_t height,
         return error::operation_failed;
 
     // Populate transaction references from link metadata.
-    if (!blocks_->update(block))
+    if (!blocks_->update_transactions(block))
         return error::operation_failed;
 
     // Confirm all transactions (candidate state transition not requried).
@@ -520,6 +588,9 @@ code data_base::push(const block& block, size_t height,
     if (!blocks_->validate(block.hash(), error::success))
         return error::operation_failed;
 
+    if ((ec = filter(block)))
+        return ec;
+
     if ((ec = catalog(block)))
         return ec;
 
@@ -528,7 +599,8 @@ code data_base::push(const block& block, size_t height,
     if (!blocks_->promote(block.hash(), height, false))
         return error::operation_failed;
 
-    commit();
+    blocks_->commit();
+    transactions_->commit();
 
     return end_write() ? error::success : error::store_lock_failure;
     //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -649,8 +721,8 @@ code data_base::pop_header(chain::header& out_header, size_t height)
     if (!blocks_->demote(result.hash(), height, true))
         return error::operation_failed;
 
-    // Commit everything that was changed and return header.
     blocks_->commit();
+
     out_header = result.header();
     BITCOIN_ASSERT(out_header.is_valid());
 
@@ -728,7 +800,7 @@ code data_base::push_block(const block& block, size_t height)
     if (!begin_write())
         return error::store_lock_failure;
 
-    // Confirm txs (and thereby also address indexes), spend prevouts.
+    // Confirm txs (and thereby also payment indexes), spend prevouts.
     if (!transactions_->confirm(block, height, median_time_past))
         return error::operation_failed;
 
@@ -737,7 +809,7 @@ code data_base::push_block(const block& block, size_t height)
     if (!blocks_->promote(block.hash(), height, false))
         return error::operation_failed;
 
-    commit();
+    blocks_->commit();
 
     block.metadata.confirm = asio::steady_clock::now() - start;
     return end_write() ? error::success : error::store_lock_failure;
@@ -769,7 +841,7 @@ code data_base::pop_block(chain::block& out_block, size_t height)
     if (!begin_write())
         return error::store_lock_failure;
 
-    // Deconfirm txs (and thereby also address indexes), unspend prevouts.
+    // Deconfirm txs (and thereby also payment indexes), unspend prevouts.
     if (!transactions_->unconfirm(out_block))
         return error::operation_failed;
 
@@ -778,7 +850,7 @@ code data_base::pop_block(chain::block& out_block, size_t height)
     if (!blocks_->demote(result.hash(), height, false))
         return error::operation_failed;
 
-    commit();
+    blocks_->commit();
 
     BITCOIN_ASSERT(out_block.is_valid());
     return end_write() ? error::success : error::store_lock_failure;
@@ -786,60 +858,102 @@ code data_base::pop_block(chain::block& out_block, size_t height)
     ///////////////////////////////////////////////////////////////////////////
 }
 
+system::code data_base::populate_filter_cache(filter_database& database)
+{
+    constexpr auto interval = compact_filter_checkpoint_interval;
+    size_t height = 0u;
+
+    if (!blocks().top(height, false))
+        return error::operation_failed;
+
+    hash_list checkpoints;
+    checkpoints.reserve(height / interval);
+
+    for (auto index = interval; index <= height;
+        index = ceiling_add(index, interval))
+    {
+        const auto block_result = blocks().get(index, false);
+
+        if (!block_result)
+            return error::operation_failed;
+
+        const auto filter_result = database.get(
+            block_result.neutrino_filter());
+
+        if (!filter_result)
+            return error::operation_failed;
+
+        checkpoints.push_back(filter_result.header());
+    }
+
+    database.set_checkpoints(std::move(checkpoints));
+    return error::success;
+}
+
+// TODO: incorporate into reorg loops using safe cache object, adding a call
+// each to push_block/pop_block (or promote/demote).
+system::code data_base::update_filter_cache(filter_database& database,
+    const system::config::checkpoint& fork_point,
+    system::block_const_ptr_list_const_ptr incoming,
+    system::block_const_ptr_list_ptr outgoing)
+{
+    constexpr auto interval = compact_filter_checkpoint_interval;
+    auto checkpoints = database.checkpoints();
+    auto changed = false;
+
+    if (!outgoing->empty())
+    {
+        const auto previous_height = ceiling_add(fork_point.height(),
+            outgoing->size());
+        const auto previous_count = previous_height / interval;
+        const auto fork_height_count = fork_point.height() / interval;
+
+        if (previous_count > fork_height_count)
+        {
+            changed = true;
+            checkpoints.resize(floor_subtract(checkpoints.size(),
+                previous_count - fork_height_count));
+        }
+    }
+
+    if (!incoming->empty())
+    {
+        auto height = ceiling_add(fork_point.height(), incoming->size());
+        auto checkpoint_count = height / interval;
+
+        if (checkpoints.size() < checkpoint_count)
+        {
+            changed = true;
+            const auto last_height = checkpoints.size() * interval;
+
+            for (auto index = last_height; index <= height;
+                index = ceiling_add(index, interval))
+            {
+                const auto block_result = blocks().get(index, false);
+
+                if (!block_result)
+                    return error::operation_failed;
+
+                const auto filter_result = database.get(
+                    block_result.neutrino_filter());
+
+                if (!filter_result)
+                    return error::operation_failed;
+
+                checkpoints.push_back(filter_result.header());
+            }
+        }
+    }
+
+    if (changed)
+        database.set_checkpoints(std::move(checkpoints));
+
+    return error::success;
+}
+
 // Utilities.
 // ----------------------------------------------------------------------------
 // protected
-
-////// TODO: add segwit address indexing.
-////void data_base::push_inputs(const transaction& tx)
-////{
-////    if (tx.is_coinbase())
-////        return;
-////
-////    uint32_t index = 0;
-////    const auto& inputs = tx.inputs();
-////    const auto link = tx.metadata.link;
-////
-////    for (const auto& input: inputs)
-////    {
-////        const auto& prevout = input.previous_output();
-////        const payment_record in{ link, index++, prevout.checksum(), false };
-////
-////        if (prevout.metadata.cache.is_valid())
-////        {
-////            // This results in a complete and unambiguous history for the
-////            // address since standard outputs contain unambiguous address data.
-////            for (const auto& address: prevout.metadata.cache.addresses())
-////                addresses_->store(address.hash(), in);
-////        }
-////        else
-////        {
-////            // For any p2pk spend this creates no record (insufficient data).
-////            // For any p2kh spend this creates the ambiguous p2sh address,
-////            // which significantly expands the size of the history store.
-////            // These are tradeoffs when no prevout is cached (checkpoint sync).
-////            for (const auto& address: input.addresses())
-////                addresses_->store(address.hash(), in);
-////        }
-////    }
-////}
-
-////// TODO: add segwit address indexing.
-////void data_base::push_outputs(const transaction& tx)
-////{
-////    uint32_t index = 0;
-////    const auto& outputs = tx.outputs();
-////    const auto link = tx.metadata.link;
-////
-////    for (const auto& output: outputs)
-////    {
-////        const payment_record out{ link, index++, output.value(), true };
-////
-////        // Standard outputs contain unambiguous address data.
-////        for (const auto& address: output.addresses())
-////            addresses_->store(address.hash(), out);
-////    }
-////}
 
 // Private (assumes valid result links).
 transaction::list data_base::to_transactions(const block_result& result) const

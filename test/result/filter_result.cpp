@@ -16,15 +16,18 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
+// Sponsored in part by Digital Contract Design, LLC
+
 #include <boost/test/unit_test.hpp>
 #include <bitcoin/database.hpp>
 
 using namespace bc;
 using namespace bc::database;
 
-BOOST_AUTO_TEST_SUITE(address_result_tests)
+BOOST_AUTO_TEST_SUITE(filter_result_tests)
 
-BOOST_AUTO_TEST_CASE(address_result__method__vector__expectation)
+BOOST_AUTO_TEST_CASE(filter_result__method__vector__expectation)
 {
     BOOST_REQUIRE(true);
 }
